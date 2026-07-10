@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Directory.Build.targets가 버전 조립에 git rev-list --count를 쓰므로 전체 히스토리가
+          # 필요하다(얕은 클론이면 커밋 수가 부정확해진다). git이 없거나 실패해도 빌드 자체는
+          # 계속되도록 이미 fallback을 넣어뒀지만, CI에서는 정확한 값을 쓰기 위해 전체를 가져온다.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore IdKeeper.slnx
+
+      - name: Build
+        run: dotnet build IdKeeper.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test IdKeeper.SnowflakeApiService.Tests --no-build -c Release

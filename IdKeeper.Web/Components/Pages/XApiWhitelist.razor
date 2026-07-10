@@ -1,0 +1,651 @@
+@page "/xapiwhitelist"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = $"{Role.Administrator},{Role.Maintainer}")]
+
+@using StackExchange.Redis
+@using IdKeeper.Database.Redis
+@using Role = IdKeeper.Database.Redis.Identity.Role
+@inject XApiAllowedCidrRepository CidrRepository
+@inject XApiAllowedHostnameRepository HostnameRepository
+@inject AuditLogRepository AuditLogRepository
+@inject IConnectionMultiplexer Multiplexer
+@inject ISnackbar Snackbar
+
+<PageTitle>XApiWhitelist</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudStack Spacing="1">
+			<MudText Typo="Typo.h4" Class="mb-2">XApiWhitelist</MudText>
+			@if (!_isAdmin)
+			{
+				<MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+					읽기 전용으로 표시됩니다. 편집은 Administrator 권한만 가능합니다.
+				</MudAlert>
+			}
+		</MudStack>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudStack Spacing="2">
+				<MudText Typo="Typo.h6">허용 CIDR 추가</MudText>
+				<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+					<MudTextField @bind-Value="_newCidr"
+								  Variant="Variant.Outlined"
+								  Label="CIDR"
+								  Placeholder="예) 192.168.1.0/24 또는 2001:db8::/32"
+								  Required="true"
+								  Immediate="true"
+								  MaxLength="49"
+								  Class="mr-2"
+								  Disabled="@(!_isAdmin || _creating)" />
+					<MudTextField @bind-Value="_newDescription"
+								  Variant="Variant.Outlined"
+								  Label="Description (선택)"
+								  Immediate="true"
+								  MaxLength="256"
+								  Class="mr-2"
+								  Disabled="@(!_isAdmin || _creating)" />
+					<MudButton Variant="Variant.Filled"
+							   Color="Color.Primary"
+							   StartIcon="@Icons.Material.Filled.Add"
+							   Disabled="@(!_isAdmin || _creating || string.IsNullOrWhiteSpace(_newCidr) || _editingDescriptionKey is not null)"
+							   OnClick="CreateAsync">
+						추가
+					</MudButton>
+				</MudStack>
+				<MudText Typo="Typo.caption" Color="Color.Secondary">
+					유효한 IPv4/IPv6 CIDR만 허용됩니다. (예: 10.0.0.0/8, 2001:db8::/32)
+				</MudText>
+			</MudStack>
+		</MudPaper>
+
+		<MudPaper Elevation="2"
+				  Class="pa-4 mt-4">
+			<MudTable T="XApiAllowedCidr"
+					  Items="@_items"
+					  Hover="true"
+					  Breakpoint="Breakpoint.Sm"
+					  Class="mudblazor-table-no-border">
+				<HeaderContent>
+					<MudTh>Cidr</MudTh>
+					<MudTh>Description</MudTh>
+					<MudTh>Actions</MudTh>
+				</HeaderContent>
+				<RowTemplate>
+					<MudTd DataLabel="Cidr">@context.Cidr</MudTd>
+					<MudTd DataLabel="Description">
+						@if (_isAdmin && _editingDescriptionKey == context.Cidr)
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudTextField @bind-Value="_editingDescription"
+											  Variant="Variant.Outlined"
+											  Placeholder="Description"
+											  Immediate="true"
+											  Class="mr-1" />
+								<MudIconButton Icon="@Icons.Material.Filled.Check"
+											   Color="Color.Success"
+											   Size="Size.Small"
+											   Disabled="@_savingDescription"
+											   OnClick="@(() => SaveDescriptionAsync(context.Cidr))" />
+								<MudIconButton Icon="@Icons.Material.Filled.Close"
+											   Color="Color.Default"
+											   Size="Size.Small"
+											   Disabled="@_savingDescription"
+											   OnClick="@CancelEditDescription" />
+							</MudStack>
+						}
+						else
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudText Typo="Typo.body2">
+									@((string.IsNullOrWhiteSpace(context.Description) ? "-" : context.Description))
+								</MudText>
+								<MudIconButton Icon="@Icons.Material.Filled.Edit"
+											   Color="Color.Primary"
+											   Size="Size.Small"
+											   Disabled="@(!_isAdmin || _editingDescriptionKey is not null)"
+											   OnClick="@(() => BeginEditDescription(context))" />
+							</MudStack>
+						}
+					</MudTd>
+					<MudTd DataLabel="Actions">
+						<MudIconButton Icon="@Icons.Material.Filled.Delete"
+									   Size="Size.Small"
+									   Color="Color.Error"
+									   Disabled="@(!_isAdmin || _editingDescriptionKey == context.Cidr)"
+									   OnClick="@(() => DeleteCidrAsync(context.Cidr))" />
+					</MudTd>
+				</RowTemplate>
+				<NoRecordsContent>
+					<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+						<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+						Allow all ip ranges.
+					</MudText>
+				</NoRecordsContent>
+			</MudTable>
+		@if (_isLoading)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+		}
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudStack Spacing="2">
+				<MudText Typo="Typo.h6">허용 DDNS 추가</MudText>
+				<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+					<MudTextField @bind-Value="_newHostname"
+								  Variant="Variant.Outlined"
+								  Label="Hostname"
+								  Placeholder="예) myhome.duckdns.org"
+								  Required="true"
+								  Immediate="true"
+								  MaxLength="253"
+								  Class="mr-2"
+								  Disabled="@(!_isAdmin || _creatingHostname)" />
+					<MudTextField @bind-Value="_newHostnameDescription"
+								  Variant="Variant.Outlined"
+								  Label="Description (선택)"
+								  Immediate="true"
+								  MaxLength="256"
+								  Class="mr-2"
+								  Disabled="@(!_isAdmin || _creatingHostname)" />
+					<MudButton Variant="Variant.Filled"
+							   Color="Color.Primary"
+							   StartIcon="@Icons.Material.Filled.Add"
+							   Disabled="@(!_isAdmin || _creatingHostname || string.IsNullOrWhiteSpace(_newHostname) || _editingHostnameDescriptionKey is not null)"
+							   OnClick="CreateHostnameAsync">
+						추가
+					</MudButton>
+				</MudStack>
+				<MudText Typo="Typo.caption" Color="Color.Secondary">
+					IP가 바뀔 수 있는 DDNS 호스트명을 등록하면 백엔드가 주기적으로 재해석해 허용
+					목록에 반영합니다. 아래 "현재 해석된 IP"는 이 화면을 불러온 시점의 참고용 값이며,
+					실제 접근 허용 여부는 백엔드가 별도 주기로 갱신하는 캐시를 기준으로 판단합니다.
+				</MudText>
+			</MudStack>
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4 mt-4">
+			<MudTable T="XApiAllowedHostname"
+					  Items="@_hostnameItems"
+					  Hover="true"
+					  Breakpoint="Breakpoint.Sm"
+					  Class="mudblazor-table-no-border">
+				<HeaderContent>
+					<MudTh>Hostname</MudTh>
+					<MudTh>현재 해석된 IP</MudTh>
+					<MudTh>Description</MudTh>
+					<MudTh>Actions</MudTh>
+				</HeaderContent>
+				<RowTemplate>
+					<MudTd DataLabel="Hostname">@context.Hostname</MudTd>
+					<MudTd DataLabel="현재 해석된 IP">
+						@(_resolvedIpsByHostname.TryGetValue(context.Hostname, out string? resolvedIps) ? resolvedIps : "확인 불가")
+					</MudTd>
+					<MudTd DataLabel="Description">
+						@if (_isAdmin && _editingHostnameDescriptionKey == context.Hostname)
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudTextField @bind-Value="_editingHostnameDescription"
+											  Variant="Variant.Outlined"
+											  Placeholder="Description"
+											  Immediate="true"
+											  Class="mr-1" />
+								<MudIconButton Icon="@Icons.Material.Filled.Check"
+											   Color="Color.Success"
+											   Size="Size.Small"
+											   Disabled="@_savingHostnameDescription"
+											   OnClick="@(() => SaveHostnameDescriptionAsync(context.Hostname))" />
+								<MudIconButton Icon="@Icons.Material.Filled.Close"
+											   Color="Color.Default"
+											   Size="Size.Small"
+											   Disabled="@_savingHostnameDescription"
+											   OnClick="@CancelEditHostnameDescription" />
+							</MudStack>
+						}
+						else
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudText Typo="Typo.body2">
+									@((string.IsNullOrWhiteSpace(context.Description) ? "-" : context.Description))
+								</MudText>
+								<MudIconButton Icon="@Icons.Material.Filled.Edit"
+											   Color="Color.Primary"
+											   Size="Size.Small"
+											   Disabled="@(!_isAdmin || _editingHostnameDescriptionKey is not null)"
+											   OnClick="@(() => BeginEditHostnameDescription(context))" />
+							</MudStack>
+						}
+					</MudTd>
+					<MudTd DataLabel="Actions">
+						<MudIconButton Icon="@Icons.Material.Filled.Delete"
+									   Size="Size.Small"
+									   Color="Color.Error"
+									   Disabled="@(!_isAdmin || _editingHostnameDescriptionKey == context.Hostname)"
+									   OnClick="@(() => DeleteHostnameAsync(context.Hostname))" />
+					</MudTd>
+				</RowTemplate>
+				<NoRecordsContent>
+					<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+						<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+						등록된 DDNS 호스트명이 없습니다.
+					</MudText>
+				</NoRecordsContent>
+			</MudTable>
+		@if (_isLoading)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+		}
+		</MudPaper>
+	</MudStack>
+</MudContainer>
+
+@code {
+	private List<XApiAllowedCidr> _items = [];
+	private bool _isLoading = true;
+
+	// Authorization
+	[CascadingParameter]
+	private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+	private bool _isAdmin;
+	private string _actor = string.Empty;
+
+	// New item creation
+	private string _newCidr = string.Empty;
+	private string? _newDescription;
+	private bool _creating;
+
+	// Description 편집 상태 (Cidr 자체가 자연키)
+	#region Description Edit
+	private string? _editingDescriptionKey;
+	private string? _editingDescription;
+	private bool _savingDescription;
+	#endregion
+
+	// DDNS 호스트명
+	private List<XApiAllowedHostname> _hostnameItems = [];
+	private Dictionary<string, string> _resolvedIpsByHostname = new(StringComparer.OrdinalIgnoreCase);
+	private string _newHostname = string.Empty;
+	private string? _newHostnameDescription;
+	private bool _creatingHostname;
+
+	#region Hostname Description Edit
+	private string? _editingHostnameDescriptionKey;
+	private string? _editingHostnameDescription;
+	private bool _savingHostnameDescription;
+	#endregion
+
+	protected override async Task OnInitializedAsync()
+	{
+		var authState = await AuthenticationStateTask;
+		_isAdmin = authState.User.IsInRole(Role.Administrator);
+		_actor = authState.User.Identity?.Name ?? "unknown";
+
+		try
+		{
+			_items = [.. (await CidrRepository.GetAllAsync()).OrderBy(r => r.Cidr)];
+			_hostnameItems = [.. (await HostnameRepository.GetAllAsync()).OrderBy(r => r.Hostname)];
+		}
+		finally
+		{
+			_isLoading = false;
+		}
+
+		await ResolveHostnamesForDisplayAsync();
+	}
+
+	private async Task NotifyCidrChangedAsync() =>
+		await Multiplexer.GetSubscriber().PublishAsync(
+			RedisChannel.Literal(RedisKeyNames.PubSub.CidrChanged), RedisValue.EmptyString);
+
+	private async Task CreateAsync()
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("권한이 없습니다. Administrator만 추가할 수 있습니다.", Severity.Error);
+			return;
+		}
+
+		if (_creating)
+		{
+			return;
+		}
+
+		string cidr = _newCidr?.Trim() ?? string.Empty;
+		string? description = string.IsNullOrWhiteSpace(_newDescription) ? null : _newDescription!.Trim();
+
+		if (string.IsNullOrWhiteSpace(cidr))
+		{
+			Snackbar.Add("CIDR 를 입력하세요.", Severity.Warning);
+			return;
+		}
+
+		if (!IsValidCidr(cidr))
+		{
+			Snackbar.Add("유효한 CIDR 형식이 아닙니다. (예: 192.168.1.0/24, 2001:db8::/32)", Severity.Error);
+			return;
+		}
+
+		_creating = true;
+
+		try
+		{
+			bool created = await CidrRepository.CreateAsync(cidr, description);
+			if (!created)
+			{
+				Snackbar.Add("이미 존재하는 CIDR 입니다.", Severity.Info);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(AuditLogAction.XApiWhitelistCreated, _actor, detail: cidr);
+			await NotifyCidrChangedAsync();
+
+			_items.Add(new XApiAllowedCidr { Cidr = cidr, Description = description });
+			_items = [.. _items.OrderBy(x => x.Cidr)];
+
+			_newCidr = string.Empty;
+			_newDescription = null;
+
+			Snackbar.Add("CIDR 추가 완료.", Severity.Success);
+			StateHasChanged();
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"추가 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_creating = false;
+		}
+	}
+
+	private static bool IsValidCidr(string input) =>
+		!string.IsNullOrWhiteSpace(input) && IPNetwork.TryParse(input.Trim(), out _);
+
+	private async Task DeleteCidrAsync(string cidr)
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("권한이 없습니다. Administrator만 삭제할 수 있습니다.", Severity.Error);
+			return;
+		}
+
+		if (_editingDescriptionKey is not null)
+		{
+			Snackbar.Add("편집 중에는 삭제할 수 없습니다.", Severity.Info);
+			return;
+		}
+
+		if (!await CidrRepository.ExistsAsync(cidr))
+		{
+			Snackbar.Add($"삭제 대상이 없습니다 ({cidr})", Severity.Info);
+			return;
+		}
+
+		await CidrRepository.DeleteAsync(cidr);
+		await AuditLogRepository.AppendAsync(AuditLogAction.XApiWhitelistDeleted, _actor, detail: cidr);
+		await NotifyCidrChangedAsync();
+
+		Int32 index = _items.FindIndex(x => x.Cidr == cidr);
+		if (index >= 0)
+		{
+			_items.RemoveAt(index);
+			StateHasChanged();
+		}
+
+		Snackbar.Add($"삭제 완료 ({cidr})", Severity.Warning);
+	}
+
+	#region Description Edit
+	private void BeginEditDescription(XApiAllowedCidr item)
+	{
+		if (_editingDescriptionKey is not null) return;
+		_editingDescriptionKey = item.Cidr;
+		_editingDescription = item.Description;
+	}
+
+	private void CancelEditDescription()
+	{
+		_editingDescriptionKey = null;
+		_editingDescription = null;
+		_savingDescription = false;
+	}
+
+	private async Task SaveDescriptionAsync(string cidr)
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("권한이 없습니다. Administrator만 저장할 수 있습니다.", Severity.Error);
+			return;
+		}
+
+		if (_savingDescription) return;
+		_savingDescription = true;
+
+		try
+		{
+			string? description = string.IsNullOrWhiteSpace(_editingDescription)
+				? null
+				: _editingDescription!.Trim();
+
+			bool found = await CidrRepository.UpdateDescriptionAsync(cidr, description);
+			if (!found)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.XApiWhitelistDescriptionUpdated, _actor, detail: $"{cidr}: {description}");
+
+			var local = _items.FirstOrDefault(x => x.Cidr == cidr);
+			if (local != null)
+				local.Description = description;
+
+			Snackbar.Add("Description 저장 완료.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			CancelEditDescription();
+			StateHasChanged();
+		}
+	}
+	#endregion
+
+	#region Hostname
+	private async Task ResolveHostnamesForDisplayAsync()
+	{
+		foreach (XApiAllowedHostname item in _hostnameItems)
+		{
+			_resolvedIpsByHostname[item.Hostname] = await ResolveForDisplayAsync(item.Hostname);
+		}
+		await InvokeAsync(StateHasChanged);
+	}
+
+	// 실제 접근 허용 판단은 ApiService의 CidrCacheRefreshService가 별도 주기로 수행하며,
+	// 여기서는 관리자 화면에 보여줄 참고용 값만 가볍게 조회한다(느린/응답 없는 DNS가
+	// 페이지를 막지 않도록 호스트명당 짧은 타임아웃을 둔다).
+	private static async Task<string> ResolveForDisplayAsync(string hostname)
+	{
+		try
+		{
+			using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+			IPAddress[] addresses = await Dns.GetHostAddressesAsync(hostname, cts.Token);
+			return addresses.Length == 0
+				? "확인 불가"
+				: string.Join(", ", addresses.Select(a => a.ToString()));
+		}
+		catch
+		{
+			return "확인 불가";
+		}
+	}
+
+	private async Task CreateHostnameAsync()
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("권한이 없습니다. Administrator만 추가할 수 있습니다.", Severity.Error);
+			return;
+		}
+
+		if (_creatingHostname)
+		{
+			return;
+		}
+
+		string hostname = _newHostname?.Trim() ?? string.Empty;
+		string? description = string.IsNullOrWhiteSpace(_newHostnameDescription)
+			? null
+			: _newHostnameDescription!.Trim();
+
+		if (string.IsNullOrWhiteSpace(hostname))
+		{
+			Snackbar.Add("Hostname 을 입력하세요.", Severity.Warning);
+			return;
+		}
+
+		if (Uri.CheckHostName(hostname) != UriHostNameType.Dns)
+		{
+			Snackbar.Add("유효한 호스트명 형식이 아닙니다. (예: myhome.duckdns.org)", Severity.Error);
+			return;
+		}
+
+		_creatingHostname = true;
+
+		try
+		{
+			bool created = await HostnameRepository.CreateAsync(hostname, description);
+			if (!created)
+			{
+				Snackbar.Add("이미 존재하는 Hostname 입니다.", Severity.Info);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.XApiWhitelistHostnameCreated, _actor, detail: hostname);
+			await NotifyCidrChangedAsync();
+
+			_hostnameItems.Add(new XApiAllowedHostname { Hostname = hostname, Description = description });
+			_hostnameItems = [.. _hostnameItems.OrderBy(x => x.Hostname)];
+
+			_newHostname = string.Empty;
+			_newHostnameDescription = null;
+
+			Snackbar.Add("Hostname 추가 완료.", Severity.Success);
+			StateHasChanged();
+
+			_resolvedIpsByHostname[hostname] = await ResolveForDisplayAsync(hostname);
+			await InvokeAsync(StateHasChanged);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"추가 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_creatingHostname = false;
+		}
+	}
+
+	private async Task DeleteHostnameAsync(string hostname)
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("권한이 없습니다. Administrator만 삭제할 수 있습니다.", Severity.Error);
+			return;
+		}
+
+		if (_editingHostnameDescriptionKey is not null)
+		{
+			Snackbar.Add("편집 중에는 삭제할 수 없습니다.", Severity.Info);
+			return;
+		}
+
+		if (!await HostnameRepository.ExistsAsync(hostname))
+		{
+			Snackbar.Add($"삭제 대상이 없습니다 ({hostname})", Severity.Info);
+			return;
+		}
+
+		await HostnameRepository.DeleteAsync(hostname);
+		await AuditLogRepository.AppendAsync(
+			AuditLogAction.XApiWhitelistHostnameDeleted, _actor, detail: hostname);
+		await NotifyCidrChangedAsync();
+
+		Int32 index = _hostnameItems.FindIndex(x => x.Hostname == hostname);
+		if (index >= 0)
+		{
+			_hostnameItems.RemoveAt(index);
+			StateHasChanged();
+		}
+
+		Snackbar.Add($"삭제 완료 ({hostname})", Severity.Warning);
+	}
+
+	private void BeginEditHostnameDescription(XApiAllowedHostname item)
+	{
+		if (_editingHostnameDescriptionKey is not null) return;
+		_editingHostnameDescriptionKey = item.Hostname;
+		_editingHostnameDescription = item.Description;
+	}
+
+	private void CancelEditHostnameDescription()
+	{
+		_editingHostnameDescriptionKey = null;
+		_editingHostnameDescription = null;
+		_savingHostnameDescription = false;
+	}
+
+	private async Task SaveHostnameDescriptionAsync(string hostname)
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("권한이 없습니다. Administrator만 저장할 수 있습니다.", Severity.Error);
+			return;
+		}
+
+		if (_savingHostnameDescription) return;
+		_savingHostnameDescription = true;
+
+		try
+		{
+			string? description = string.IsNullOrWhiteSpace(_editingHostnameDescription)
+				? null
+				: _editingHostnameDescription!.Trim();
+
+			bool found = await HostnameRepository.UpdateDescriptionAsync(hostname, description);
+			if (!found)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.XApiWhitelistHostnameDescriptionUpdated, _actor,
+				detail: $"{hostname}: {description}");
+
+			var local = _hostnameItems.FirstOrDefault(x => x.Hostname == hostname);
+			if (local != null)
+				local.Description = description;
+
+			Snackbar.Add("Description 저장 완료.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			CancelEditHostnameDescription();
+			StateHasChanged();
+		}
+	}
+	#endregion
+}

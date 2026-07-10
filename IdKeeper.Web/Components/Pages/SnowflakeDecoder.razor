@@ -1,0 +1,216 @@
+@page "/snowflake-decoder"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = $"{Role.Administrator},{Role.Maintainer}")]
+
+@using IdKeeper.Common.Constants
+@inject AllocatedIdRepository AllocatedIdRepository
+
+<PageTitle>Snowflake Decoder</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-4">Snowflake ID Decoder</MudText>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudPaper Elevation="2" Class="pa-6">
+			<MudStack Spacing="3">
+				<MudTextField T="string"
+							  Label="Snowflake ID"
+							  @bind-Value="_inputId"
+							  Variant="Variant.Outlined"
+							  Placeholder="예) 168556960186798080"
+							  HelperText="Int64 범위의 Snowflake ID를 입력하세요."
+							  Immediate="true"
+							  OnKeyDown="@OnKeyDownAsync" />
+
+				<MudButton Variant="Variant.Filled"
+						   Color="Color.Primary"
+						   StartIcon="@Icons.Material.Filled.FindInPage"
+						   Size="Size.Large"
+						   OnClick="@DecodeAsync"
+						   Disabled="@string.IsNullOrWhiteSpace(_inputId)">
+					Decode
+				</MudButton>
+			</MudStack>
+		</MudPaper>
+
+		@if (_error is not null)
+		{
+			<MudAlert Severity="Severity.Error" ShowCloseIcon="true" CloseIconClicked="@(() => _error = null)">
+				@_error
+			</MudAlert>
+		}
+
+		@if (_result is not null)
+		{
+			<MudPaper Elevation="2" Class="pa-6">
+				<MudText Typo="Typo.h6" Class="mb-4">Decoded Result</MudText>
+
+				<MudGrid Spacing="3">
+					<MudItem xs="12">
+						<MudText Typo="Typo.caption" Color="Color.Secondary">Snowflake ID</MudText>
+						<MudText Typo="Typo.body1"><b>@_result.SnowflakeId</b></MudText>
+					</MudItem>
+
+					<MudItem xs="12" sm="6">
+						<MudPaper Outlined="true" Class="pa-4">
+							<MudStack Spacing="1">
+								<MudText Typo="Typo.caption" Color="Color.Secondary">Generated At (UTC)</MudText>
+								<MudText Typo="Typo.body1">
+									@_result.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm:ss.fff")
+								</MudText>
+								<MudText Typo="Typo.caption" Color="Color.Tertiary">
+									Local: @_result.GeneratedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")
+								</MudText>
+							</MudStack>
+						</MudPaper>
+					</MudItem>
+
+					<MudItem xs="12" sm="6">
+						<MudPaper Outlined="true" Class="pa-4">
+							<MudStack Spacing="1">
+								<MudText Typo="Typo.caption" Color="Color.Secondary">
+									Timestamp (@SnowflakeConstant.BitCountOfTimestamp bits)
+								</MudText>
+								<MudText Typo="Typo.body1">@_result.TimestampMs ms</MudText>
+								<MudText Typo="Typo.caption" Color="Color.Tertiary">
+									Epoch: @SnowflakeConstant.BaseDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC
+								</MudText>
+							</MudStack>
+						</MudPaper>
+					</MudItem>
+
+					<MudItem xs="12" sm="6">
+						<MudPaper Outlined="true" Class="pa-4">
+							<MudStack Spacing="1">
+								<MudText Typo="Typo.caption" Color="Color.Secondary">
+									Node ID (@SnowflakeConstant.BitCountOfNodeId bits)
+								</MudText>
+								<MudText Typo="Typo.h5" Color="Color.Primary">@_result.NodeId</MudText>
+							</MudStack>
+						</MudPaper>
+					</MudItem>
+
+					<MudItem xs="12" sm="6">
+						<MudPaper Outlined="true" Class="pa-4">
+							<MudStack Spacing="1">
+								<MudText Typo="Typo.caption" Color="Color.Secondary">
+									Sequence ID (@SnowflakeConstant.BitCountOfSequenceId bits)
+								</MudText>
+								<MudText Typo="Typo.h5">@_result.SequenceId</MudText>
+							</MudStack>
+						</MudPaper>
+					</MudItem>
+
+					<MudItem xs="12">
+						@if (_result.AllocatedId is not null)
+						{
+							<MudPaper Outlined="true" Class="pa-4" Style="border-color: var(--mud-palette-success);">
+								<MudStack Spacing="1">
+									<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+										<MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+										<MudText Typo="Typo.caption" Color="Color.Success">Node ID Requester (현재 할당됨)</MudText>
+									</MudStack>
+									<MudText Typo="Typo.body1"><b>@_result.AllocatedId.Requester</b></MudText>
+									<MudText Typo="Typo.caption" Color="Color.Tertiary">
+										할당: @DateTimeConstant.ConvertDateTime(_result.AllocatedId.CreatedAtUtc, useLocalTime: true)
+										&nbsp;|&nbsp;
+										만료: @(_result.AllocatedId.IgnoreExpire
+											? "만료 없음"
+											: DateTimeConstant.ConvertDateTime(_result.AllocatedId.ExpiredAtUtc, useLocalTime: true)
+												+ $" ({DateTimeConstant.GetRemainTime(_result.AllocatedId.ExpiredAtUtc)})")
+									</MudText>
+								</MudStack>
+							</MudPaper>
+						}
+						else
+						{
+							<MudAlert Severity="Severity.Warning" Dense="true">
+								Node ID <b>@_result.NodeId</b> 는 현재 할당된 Requester가 없습니다 (만료되었거나 반납됨).
+							</MudAlert>
+						}
+					</MudItem>
+				</MudGrid>
+			</MudPaper>
+
+			<MudPaper Elevation="1" Class="pa-4">
+				<MudText Typo="Typo.subtitle2" Class="mb-2">비트 구성 (63-bit)</MudText>
+				<MudStack Row="true" Spacing="0" Style="font-family: monospace; font-size: 0.75rem; overflow-x: auto;">
+					<MudTooltip Text="@($"Timestamp: {_result.TimestampMs}ms")">
+						<MudPaper Outlined="true" Class="pa-2 mr-1"
+								  Style="@($"background: var(--mud-palette-success-lighten); flex: {SnowflakeConstant.BitCountOfTimestamp}; text-align: center; min-width: 80px;")">
+							<MudText Typo="Typo.caption">Timestamp</MudText>
+							<MudText Typo="Typo.caption">@SnowflakeConstant.BitCountOfTimestamp bits</MudText>
+						</MudPaper>
+					</MudTooltip>
+					<MudTooltip Text="@($"Node ID: {_result.NodeId}")">
+						<MudPaper Outlined="true" Class="pa-2 mr-1"
+								  Style="@($"background: var(--mud-palette-info-lighten); flex: {SnowflakeConstant.BitCountOfNodeId}; text-align: center; min-width: 60px;")">
+							<MudText Typo="Typo.caption">Node ID</MudText>
+							<MudText Typo="Typo.caption">@SnowflakeConstant.BitCountOfNodeId bits</MudText>
+						</MudPaper>
+					</MudTooltip>
+					<MudTooltip Text="@($"Sequence: {_result.SequenceId}")">
+						<MudPaper Outlined="true" Class="pa-2"
+								  Style="@($"background: var(--mud-palette-warning-lighten); flex: {SnowflakeConstant.BitCountOfSequenceId}; text-align: center; min-width: 60px;")">
+							<MudText Typo="Typo.caption">Sequence</MudText>
+							<MudText Typo="Typo.caption">@SnowflakeConstant.BitCountOfSequenceId bits</MudText>
+						</MudPaper>
+					</MudTooltip>
+				</MudStack>
+			</MudPaper>
+		}
+	</MudStack>
+</MudContainer>
+
+@code {
+	private string _inputId = string.Empty;
+	private string? _error;
+	private DecodeResult? _result;
+
+	private record DecodeResult(
+		Int64 SnowflakeId,
+		Int64 TimestampMs,
+		Int32 NodeId,
+		Int32 SequenceId,
+		DateTime GeneratedAtUtc,
+		AllocatedId? AllocatedId);
+
+	private async Task OnKeyDownAsync(KeyboardEventArgs e)
+	{
+		if (e.Key == "Enter")
+		{
+			await DecodeAsync();
+		}
+	}
+
+	private async Task DecodeAsync()
+	{
+		_error = null;
+		_result = null;
+
+		if (!Int64.TryParse(_inputId.Trim(), out Int64 snowflakeId) || snowflakeId <= 0)
+		{
+			_error = "유효한 Snowflake ID (양의 정수)를 입력해주세요.";
+			return;
+		}
+
+		Int32 sequenceBits = SnowflakeConstant.BitCountOfSequenceId;
+		Int32 nodeBits = SnowflakeConstant.BitCountOfNodeId;
+
+		Int64 sequenceMask = (1L << sequenceBits) - 1;
+		Int64 nodeMask = (1L << nodeBits) - 1;
+
+		Int32 sequenceId = (Int32)(snowflakeId & sequenceMask);
+		Int32 nodeId = (Int32)((snowflakeId >> sequenceBits) & nodeMask);
+		Int64 timestampMs = snowflakeId >> (sequenceBits + nodeBits);
+
+		DateTime baseDateTimeUtc = SnowflakeConstant.BaseDateTime;
+		DateTime generatedAtUtc = baseDateTimeUtc.AddMilliseconds(timestampMs);
+
+		AllocatedId? allocatedId = await AllocatedIdRepository.GetAsync(nodeId);
+
+		_result = new(snowflakeId, timestampMs, nodeId, sequenceId, generatedAtUtc, allocatedId);
+	}
+}

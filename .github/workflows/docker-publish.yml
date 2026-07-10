@@ -1,0 +1,60 @@
+name: Publish container images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - service: apiservice
+            project: IdKeeper.ApiService/IdKeeper.ApiService.csproj
+          - service: snowflakeapiservice
+            project: IdKeeper.SnowflakeApiService/IdKeeper.SnowflakeApiService.csproj
+          - service: web
+            project: IdKeeper.Web/IdKeeper.Web.csproj
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Directory.Build.targets의 버전 조립(git rev-list --count)이 정확한 값을 내도록
+          # 전체 히스토리를 가져온다. git이 없거나 실패해도 빌드 자체는 계속되도록 fallback이
+          # 있지만, 이미지 태그에 쓰이는 정보라 정확도를 우선한다.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish ${{ matrix.service }} image
+        run: |
+          set -e
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          # 태그마다 별도로 publish한다 — ContainerImageTag(단수)만 신뢰할 수 있게 동작하는 것을
+          # 확인했고(복수형 ContainerImageTags는 CLI에서 세미콜론 구분자 처리가 불안정했다),
+          # latest는 최신 배포를 가리키고 sha-<short> 태그는 특정 커밋으로 롤백할 수 있게 한다.
+          for TAG in latest "sha-$SHORT_SHA"; do
+            dotnet publish "${{ matrix.project }}" \
+              -c Release --os linux --arch x64 \
+              -t:PublishContainer \
+              -p:ContainerRegistry=${{ env.REGISTRY }} \
+              -p:ContainerRepository=${{ github.repository_owner }}/idkeeper-${{ matrix.service }} \
+              -p:ContainerImageTag="$TAG" \
+              -p:GitHubRepositoryUrl=https://github.com/${{ github.repository }}
+          done

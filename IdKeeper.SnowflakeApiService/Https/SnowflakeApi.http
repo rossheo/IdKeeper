@@ -1,0 +1,11 @@
+# For more info on HTTP files go to https://aka.ms/vs/httpfile
+
+###
+POST https://localhost:7538/v1/SnowflakeId/Alloc
+Content-Type: application/json
+{
+    "Count": 100
+}
+
+###
+Get https://localhost:7538/v1/SnowflakeId/Version

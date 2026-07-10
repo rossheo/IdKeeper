@@ -1,0 +1,194 @@
+@page "/"
+@rendermode InteractiveServer
+
+@inject AllocatedIdRepository AllocatedIdRepository
+
+<PageTitle>Dashboard</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Style="padding-top:1rem; padding-bottom:1rem;">
+	<MudCard Class="mt-3" Elevation="1">
+		<MudCardContent>
+			<MudText Typo="Typo.h5" GutterBottom="true">IdKeeper는 SnowflakeId의 NodeId를 관리</MudText>
+		</MudCardContent>
+	</MudCard>
+
+	<MudCard Class="mt-3" Elevation="1">
+		<MudCardContent>
+			<MudText Typo="Typo.h5" GutterBottom="true">Id 비트 구성 요약 (64-bit)</MudText>
+
+			<MudStack Row="true" Wrap="Wrap.NoWrap" Spacing="0" Class="mt-3"
+					  Style="height:40px; width:100%; overflow:hidden; border-radius:4px;">
+				<MudTooltip Text="부호 비트 · 1비트 (항상 0)">
+					<MudPaper Style=@SignBitStyle>
+						부호
+					</MudPaper>
+				</MudTooltip>
+				<MudTooltip Text=@TimeStampTooltip>
+					<MudPaper Style=@TimestampStyle>
+						타임스탬프
+					</MudPaper>
+				</MudTooltip>
+				<MudTooltip Text=@NodeIdTooltip>
+					<MudPaper Style=@NodeIdStyle>
+						노드
+					</MudPaper>
+				</MudTooltip>
+				<MudTooltip Text=@SequenceTooltip>
+					<MudPaper Style=@SequenceStyle>
+						시퀀스
+					</MudPaper>
+				</MudTooltip>
+			</MudStack>
+		</MudCardContent>
+	</MudCard>
+
+	<MudCard Class="mt-3" Elevation="1">
+		<MudCardHeader>
+			<CardHeaderContent>
+				<MudText Typo="Typo.h5">Node ID 잔여 현황</MudText>
+			</CardHeaderContent>
+			<CardHeaderActions>
+				<MudIconButton Icon="@Icons.Material.Filled.Refresh"
+							   OnClick="@RefreshAsync"
+							   Disabled="@(_idStats is null)" />
+			</CardHeaderActions>
+		</MudCardHeader>
+		<MudCardContent>
+			@if (_idStats is null)
+			{
+				<MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+			}
+			else
+			{
+				<MudGrid Spacing="3">
+					<MudItem xs="12" sm="4">
+						<MudPaper Outlined="true" Class="pa-4" Style="text-align:center">
+							<MudText Typo="Typo.caption" Color="Color.Secondary">전체 Node ID</MudText>
+							<MudText Typo="Typo.h5">@_idStats.Total.ToString("N0")</MudText>
+						</MudPaper>
+					</MudItem>
+					<MudItem xs="12" sm="4">
+						<MudPaper Outlined="true" Class="pa-4" Style="text-align:center">
+							<MudText Typo="Typo.caption" Color="Color.Secondary">사용 중</MudText>
+							<MudText Typo="Typo.h5" Color="@_idStats.UsedColor">@_idStats.Used.ToString("N0")</MudText>
+						</MudPaper>
+					</MudItem>
+					<MudItem xs="12" sm="4">
+						<MudPaper Outlined="true" Class="pa-4" Style="text-align:center">
+							<MudText Typo="Typo.caption" Color="Color.Secondary">잔여</MudText>
+							<MudText Typo="Typo.h5" Color="Color.Success">@_idStats.Remaining.ToString("N0")</MudText>
+						</MudPaper>
+					</MudItem>
+				</MudGrid>
+
+				<MudStack Spacing="1" Class="mt-4">
+					<MudStack Row="true" Spacing="0" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+						<MudText Typo="Typo.body2">사용률 <b>@(_idStats.UsedPercent.ToString("F2"))%</b></MudText>
+						<MudText Typo="Typo.body2" Color="Color.Secondary">잔여 @(_idStats.RemainingPercent.ToString("F2"))%</MudText>
+					</MudStack>
+					<MudProgressLinear Value="@_idStats.UsedPercent"
+									   Max="100"
+									   Color="@_idStats.UsedColor"
+									   Rounded="true"
+									   Size="Size.Large" />
+				</MudStack>
+			}
+		</MudCardContent>
+	</MudCard>
+
+	<MudCard Class="mt-3" Elevation="1">
+		<MudCardHeader>
+			<CardHeaderContent>
+				<MudText Typo="Typo.h5">Process별 Id 할당/소비 전략</MudText>
+			</CardHeaderContent>
+		</MudCardHeader>
+		<MudCardContent Class="pt-0">
+			<MudList T=object Dense="true">
+				<MudListItem>
+					<MudText Typo="Typo.subtitle2">Process마다 1~N개의 Id 요청</MudText>
+					<MudText Typo="Typo.caption" Class="mud-text-secondary">
+						@($"초당 소모량이 {(1 << SnowflakeConstant.BitCountOfSequenceId)*1000:#,0}개를 넘는 경우 Id를 N개 할당해 애플리케이션 특성에 맞춰 분산 사용")
+					</MudText>
+				</MudListItem>
+				<MudDivider />
+				<MudListItem>
+					<MudText Typo="Typo.subtitle2">Id 생성기 N개 사용 패턴</MudText>
+					<MudList Dense="true" Class="mt-1" Style="margin-left:1rem;">
+						<MudListItem>RoundRobin 방식으로 순차 할당</MudListItem>
+						<MudListItem>ThreadId % N 으로 분배</MudListItem>
+						<MudListItem>WorkerThread 수만큼 1:1 고정 매칭</MudListItem>
+						<MudListItem>
+							<MudText>요청 크기 기반 동적 분산 — RoundRobin 시작, ⌈count / maxSeqPerMs⌉개 제너레이터에 청크 병렬 할당</MudText>
+							<MudText Typo="Typo.caption" Class="mud-text-secondary">
+								SnowflakeHostedService 방식: 단일 요청이라도 maxSeqPerMs 초과 시 복수 제너레이터로 자동 확장
+							</MudText>
+						</MudListItem>
+					</MudList>
+				</MudListItem>
+			</MudList>
+		</MudCardContent>
+	</MudCard>
+</MudContainer>
+
+@code {
+	private string _baseDateTime =>
+		SnowflakeConstant.BaseDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ");
+
+	private IdStats? _idStats;
+
+	private record IdStats(Int32 Total, Int32 Used)
+	{
+		public Int32 Remaining => Total - Used;
+		public double UsedPercent => Total == 0 ? 0 : (double)Used / Total * 100.0;
+		public double RemainingPercent => 100.0 - UsedPercent;
+		public Color UsedColor => UsedPercent switch
+		{
+			>= 90 => Color.Error,
+			>= 70 => Color.Warning,
+			_ => Color.Success,
+		};
+	}
+
+	private const string _cellBase =
+		"display:flex; align-items:center; justify-content:center;" +
+		" color:var(--mud-palette-surface); font-size:.90rem;";
+
+	private string SignBitStyle =>
+		"width:40px; background:var(--mud-palette-secondary); " + _cellBase;
+
+	private string TimestampStyle =>
+		$"width:{SnowflakeConstant.BitCountOfTimestamp * 10}px; background:var(--mud-palette-primary); " + _cellBase;
+
+	private string NodeIdStyle =>
+		$"width:{SnowflakeConstant.BitCountOfNodeId * 10}px; background:var(--mud-palette-success); " + _cellBase;
+
+	private string SequenceStyle =>
+		$"width:{SnowflakeConstant.BitCountOfSequenceId * 10}px; background:var(--mud-palette-info); " + _cellBase +
+		" border-radius:0 4px 4px 0;";
+
+	public string TimeStampTooltip =>
+		$"타임스탬프 · {SnowflakeConstant.BitCountOfTimestamp}비트 (기준 시점 {_baseDateTime}부터의 밀리초)";
+
+	public string NodeIdTooltip =>
+		$"노드 Id · {SnowflakeConstant.BitCountOfNodeId}비트 (DataCenterId + WorkerId) {1 << SnowflakeConstant.BitCountOfNodeId:#,0}개";
+
+	public string SequenceTooltip =>
+		$"시퀀스 · {SnowflakeConstant.BitCountOfSequenceId}비트 (같은 ms 내에서 순차적 할당, 초당 최대 {1 << SnowflakeConstant.BitCountOfSequenceId:#,0}×1,000개)";
+
+	protected override async Task OnInitializedAsync()
+	{
+		await LoadStatsAsync();
+	}
+
+	private async Task RefreshAsync()
+	{
+		await LoadStatsAsync();
+	}
+
+	private async Task LoadStatsAsync()
+	{
+		Int32 total = 1 << SnowflakeConstant.BitCountOfNodeId;
+		Int64 used = await AllocatedIdRepository.CountOfAllocatedAsync();
+		_idStats = new(total, (Int32)Math.Min(used, total));
+	}
+}

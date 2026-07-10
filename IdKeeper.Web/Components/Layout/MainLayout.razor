@@ -1,0 +1,46 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider @ref="_mudThemeProvider" @bind-IsDarkMode="@_isDarkMode" />
+<MudPopoverProvider @rendermode="InteractiveServer" />
+<MudDialogProvider @rendermode="InteractiveServer" />
+<MudSnackbarProvider @rendermode="InteractiveServer" />
+
+<MudLayout>
+	<MudAppBar>
+		<MudStaticNavDrawerToggle DrawerId="nav-drawer" @bind-Open="_drawerOpen"
+			Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" />
+		<img src="logo.png" alt="IdKeeper" class="app-logo" />
+	</MudAppBar>
+	<MudDrawer id="nav-drawer" @bind-Open="@_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
+		<NavMenu />
+	</MudDrawer>
+	<MudMainContent Class="pt-16 pa-4 pb-12">
+		@Body
+	</MudMainContent>
+
+	<MudPaper Class="app-footer" Elevation="0" Square>
+		<MudText Typo="Typo.caption">Version: @s_informationalVersion.Value</MudText>
+	</MudPaper>
+</MudLayout>
+
+@code
+{
+	private bool _drawerOpen = true;
+
+	private MudThemeProvider? _mudThemeProvider;
+	private bool _isDarkMode;
+
+	private static readonly Assembly s_asm = typeof(Program).Assembly;
+	private static readonly Lazy<string> s_informationalVersion = new(
+		() => s_asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown");
+
+	protected override async Task OnAfterRenderAsync(bool firstRender)
+	{
+		if (firstRender && _mudThemeProvider != null)
+		{
+			_isDarkMode = await _mudThemeProvider.GetSystemDarkModeAsync();
+			StateHasChanged();
+		}
+	}
+}
+

@@ -1,0 +1,128 @@
+@rendermode InteractiveServer
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<MudNavMenu>
+	<MudNavLink Href="/"
+				Match="NavLinkMatch.All"
+				Icon="@Icons.Material.Filled.SpaceDashboard">
+		Dashboard
+	</MudNavLink>
+
+	<!-- 관리자,유지보수자 전용 메뉴 -->
+	<AuthorizeView Roles=@($"{Role.Administrator},{Role.Maintainer}")>
+		<Authorized>
+			<MudNavLink Href="/allocatedids"
+						Match="NavLinkMatch.Prefix"
+						Icon="@Icons.Material.Filled.FormatListNumberedRtl">
+				AllocatedIds
+			</MudNavLink>
+			<MudNavLink Href="/xapikeys"
+						Match="NavLinkMatch.Prefix"
+						Icon="@Icons.Material.Filled.VpnKey">
+				XApiKeys
+			</MudNavLink>
+			<MudNavLink Href="/xapiwhitelist"
+						Match="NavLinkMatch.Prefix"
+						Icon="@Icons.Material.Filled.Security">
+				XApiWhitelist
+			</MudNavLink>
+			<MudNavLink Href="/snowflake-decoder"
+						Match="NavLinkMatch.Prefix"
+						Icon="@Icons.Material.Filled.DataObject">
+				Snowflake Decoder
+			</MudNavLink>
+			<MudNavLink Href="/credential-settings"
+						Match="NavLinkMatch.Prefix"
+						Icon="@Icons.Material.Filled.VpnKey">
+				Credential 설정
+			</MudNavLink>
+		</Authorized>
+	</AuthorizeView>
+
+	<!-- 관리자 전용 메뉴 -->
+	<AuthorizeView Roles=@($"{Role.Administrator}")>
+		<Authorized>
+			<MudNavGroup Title="Admin"
+						 Icon="@Icons.Material.Filled.AdminPanelSettings"
+						 Expanded="false">
+				<MudNavLink Href="/auditlogs"
+							Match="NavLinkMatch.Prefix"
+							Icon="@Icons.Material.Filled.ManageSearch">
+					AuditLogs
+				</MudNavLink>
+				<MudNavLink Href="/userroles"
+							Match="NavLinkMatch.Prefix"
+							Icon="@Icons.Material.Filled.HowToReg">
+					UserRoles
+				</MudNavLink>
+				<MudNavLink Href="/featureswitch"
+							Match="NavLinkMatch.Prefix"
+							Icon="@Icons.Material.Filled.ToggleOn">
+					FeatureSwitch
+				</MudNavLink>
+				<MudNavLink Href="/userlockout"
+							Match="NavLinkMatch.Prefix"
+							Icon="@Icons.Material.Filled.Lock">
+					UserLockout
+				</MudNavLink>
+				<MudNavLink Href="/redisbackup"
+							Match="NavLinkMatch.Prefix"
+							Icon="@Icons.Material.Filled.Backup">
+					Redis Backup
+				</MudNavLink>
+			</MudNavGroup>
+		</Authorized>
+	</AuthorizeView>
+
+	<!-- 로그인 사용자 공통 메뉴 -->
+	<AuthorizeView>
+		<Authorized>
+			<MudNavLink Href="/Account/Manage"
+						Match="NavLinkMatch.Prefix"
+						Icon="@Icons.Material.Filled.Person">
+				@context.User.Identity?.Name
+			</MudNavLink>
+
+			<form action="/Account/Logout" method="post">
+				<AntiforgeryToken />
+				<input type="hidden" name="ReturnUrl" value="@_currentUrl" />
+				<button type="submit" class="mud-nav-link mud-ripple">
+					<MudIcon Icon="@Icons.Material.Filled.Logout"
+							 Color="Color.Info" Class="mr-3" />
+					Logout
+				</button>
+			</form>
+		</Authorized>
+		<NotAuthorized>
+			<MudNavLink Href="/Account/Login"
+						Icon="@Icons.Material.Filled.Login">
+				Login
+			</MudNavLink>
+		</NotAuthorized>
+	</AuthorizeView>
+	<!-- Version footer 높이만큼 하단 여백 확보 -->
+	<div style="height: 36px;"></div>
+</MudNavMenu>
+
+@code
+{
+	private string? _currentUrl;
+
+	protected override void OnInitialized()
+	{
+		_currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+		NavigationManager.LocationChanged += OnLocationChanged;
+	}
+
+	private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+	{
+		_currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
+		StateHasChanged();
+	}
+
+	public void Dispose()
+	{
+		NavigationManager.LocationChanged -= OnLocationChanged;
+	}
+}

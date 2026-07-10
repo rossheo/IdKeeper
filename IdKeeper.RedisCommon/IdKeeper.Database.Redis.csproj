@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Aspire.StackExchange.Redis" />
+		<PackageReference Include="StackExchange.Redis" />
+		<PackageReference Include="Microsoft.Extensions.Identity.Stores" />
+		<PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="Scripts\*.lua" />
+	</ItemGroup>
+
+</Project>

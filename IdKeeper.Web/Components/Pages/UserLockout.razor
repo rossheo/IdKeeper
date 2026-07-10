@@ -1,0 +1,228 @@
+@page "/userlockout"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = $"{Role.Administrator}")]
+
+@inject IdentityUserStore UserStore
+@inject ISnackbar Snackbar
+@inject UserManager<IdentityUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject AuditLogRepository AuditLogRepository
+
+<PageTitle>UserLockout</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-2">UserLockout</MudText>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudPaper Elevation="2"
+				  Class="pa-4 mt-4">
+			<MudTable T="UserLockoutInfo"
+					  Items="@_items"
+					  Hover="true"
+					  Breakpoint="Breakpoint.Sm"
+					  Filter="FilterFunc"
+					  Class="mudblazor-table-no-border">
+				<ToolBarContent>
+					<MudTextField @bind-Value="_searchString"
+								  Placeholder="UserName 검색"
+								  Adornment="Adornment.Start"
+								  AdornmentIcon="@Icons.Material.Filled.Search"
+								  Immediate="true"
+								  Clearable="true" />
+				</ToolBarContent>
+				<HeaderContent>
+					<MudTh>
+						<MudTableSortLabel InitialDirection="SortDirection.Ascending"
+										   SortBy="new Func<UserLockoutInfo, object>(x => x.UserName)">
+							UserName
+						</MudTableSortLabel>
+					</MudTh>
+					<MudTh>
+						<MudTableSortLabel SortBy="new Func<UserLockoutInfo, object>(
+							x => x.LockoutEnd?.UtcDateTime ?? DateTime.MinValue)">
+							LockoutEnd
+						</MudTableSortLabel>
+					</MudTh>
+					<MudTh>IsLockedOut</MudTh>
+					<MudTh></MudTh>
+				</HeaderContent>
+				<RowTemplate>
+					<MudTd DataLabel="UserName">@context.UserName</MudTd>
+					<MudTd DataLabel="LockoutEnd">
+						@if (context.LockoutEnd.HasValue)
+						{
+							<MudText Typo="Typo.body2"
+									 Color="@(context.IsLockedOut ? Color.Error : Color.Default)">
+								@context.LockoutEnd.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+							</MudText>
+						}
+						else
+						{
+							<MudText Typo="Typo.body2">-</MudText>
+						}
+					</MudTd>
+					<MudTd DataLabel="IsLockedOut">
+						<MudIcon Icon="@(context.IsLockedOut
+											 ? Icons.Material.Filled.Lock
+											 : Icons.Material.Outlined.LockOpen)"
+								 Color="@(context.IsLockedOut ? Color.Error : Color.Default)" />
+					</MudTd>
+					<MudTd DataLabel="">
+						@if (context.IsLockedOut)
+						{
+							<MudButton Variant="Variant.Outlined"
+									   Color="Color.Warning"
+									   Size="Size.Small"
+									   StartIcon="@Icons.Material.Filled.LockOpen"
+									   Disabled="@_processing"
+									   OnClick="@(() => ClearLockoutAsync(context.UserName))">
+								Lockout Clear
+							</MudButton>
+						}
+						else
+						{
+							<MudButton Variant="Variant.Outlined"
+									   Color="Color.Error"
+									   Size="Size.Small"
+									   StartIcon="@Icons.Material.Filled.Lock"
+									   Disabled="@_processing"
+									   OnClick="@(() => SetLockoutAsync(context.UserName))">
+								Lockout
+							</MudButton>
+						}
+					</MudTd>
+				</RowTemplate>
+				<NoRecordsContent>
+					<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+						<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+						No records found.
+					</MudText>
+				</NoRecordsContent>
+			</MudTable>
+		@if (_isLoading)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+		}
+		</MudPaper>
+	</MudStack>
+</MudContainer>
+
+@code {
+	private class UserLockoutInfo
+	{
+		public string UserName { get; set; } = string.Empty;
+		public DateTimeOffset? LockoutEnd { get; set; }
+		public bool IsLockedOut { get; set; }
+	}
+
+	private List<UserLockoutInfo> _items = [];
+	private bool _isLoading = true;
+	private bool _processing;
+	private string _actor = string.Empty;
+
+	#region Filter
+	private string _searchString = string.Empty;
+
+	private bool FilterFunc(UserLockoutInfo element)
+		=> string.IsNullOrWhiteSpace(_searchString)
+		   || (element.UserName?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ?? false);
+	#endregion
+
+	protected override async Task OnInitializedAsync()
+	{
+		var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+		_actor = authState.User.Identity?.Name ?? "unknown";
+		try { await LoadUsersAsync(); }
+		finally { _isLoading = false; }
+	}
+
+	private async Task LoadUsersAsync()
+	{
+		List<IdentityUser> users = await UserStore.GetAllUsersAsync();
+
+		_items = users
+			.OrderBy(u => u.UserName, StringComparer.OrdinalIgnoreCase)
+			.Select(u => new UserLockoutInfo
+			{
+				UserName = u.UserName!,
+				LockoutEnd = u.LockoutEnd,
+				IsLockedOut = u.LockoutEnd.HasValue && u.LockoutEnd.Value > DateTimeOffset.UtcNow,
+			}).ToList();
+	}
+
+	private async Task ClearLockoutAsync(string userName)
+	{
+		if (_processing) return;
+		_processing = true;
+
+		try
+		{
+			var user = await UserManager.FindByNameAsync(userName);
+			if (user is null)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			var result = await UserManager.SetLockoutEndDateAsync(user, null);
+			if (!result.Succeeded)
+			{
+				var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+				Snackbar.Add($"Lockout 해제 실패: {errors}", Severity.Error);
+				return;
+			}
+
+			await UserManager.ResetAccessFailedCountAsync(user);
+			await AuditLogRepository.AppendAsync(AuditLogAction.UserLockoutCleared, _actor, requester: userName);
+			await LoadUsersAsync();
+			Snackbar.Add($"Lockout 해제 완료: {userName}", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"오류: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_processing = false;
+			StateHasChanged();
+		}
+	}
+
+	private async Task SetLockoutAsync(string userName)
+	{
+		if (_processing) return;
+		_processing = true;
+
+		try
+		{
+			var user = await UserManager.FindByNameAsync(userName);
+			if (user is null)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			var result = await UserManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+			if (!result.Succeeded)
+			{
+				var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+				Snackbar.Add($"Lockout 설정 실패: {errors}", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(AuditLogAction.UserLockoutSet, _actor, requester: userName);
+			await LoadUsersAsync();
+			Snackbar.Add($"Lockout 설정 완료: {userName}", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"오류: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_processing = false;
+			StateHasChanged();
+		}
+	}
+}

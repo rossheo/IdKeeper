@@ -1,0 +1,191 @@
+@page "/auditlogs"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = $"{Role.Administrator}")]
+
+@inject AuditLogRepository AuditLogRepository
+
+<PageTitle>AuditLogs</PageTitle>
+
+<MudButton OnClick="@OnUseLocalTimeChanged"
+		   Variant="Variant.Filled"
+		   DropShadow="false">시간 표시 변경</MudButton>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-4">Audit Logs</MudText>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudPaper Elevation="1" Class="pa-4">
+			<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+				<MudSelect T="string?" Label="Action" @bind-Value="_filterAction" Clearable="true"
+						   Style="min-width: 160px;" AnchorOrigin="Origin.BottomLeft">
+					@foreach (string action in _allActions)
+					{
+						<MudSelectItem T="string?" Value="@action">@action</MudSelectItem>
+					}
+				</MudSelect>
+				<MudTextField T="string" Label="Actor" @bind-Value="_filterActor" Clearable="true"
+							  Immediate="false" Style="min-width: 180px;" />
+				<MudTextField T="string" Label="Requester" @bind-Value="_filterRequester" Clearable="true"
+							  Immediate="false" Style="min-width: 180px;" />
+				<MudButton Variant="Variant.Filled" Color="Color.Primary"
+						   StartIcon="@Icons.Material.Filled.Search"
+						   OnClick="@ApplyFilterAsync">검색</MudButton>
+				<MudButton Variant="Variant.Outlined"
+						   StartIcon="@Icons.Material.Filled.Clear"
+						   OnClick="@ResetFilterAsync">초기화</MudButton>
+			</MudStack>
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudTable T="AuditLog"
+					  ServerData="LoadServerDataAsync"
+					  @ref="_table"
+					  Dense="true"
+					  Hover="true"
+					  Breakpoint="Breakpoint.Sm">
+				<HeaderContent>
+					<MudTh>Id</MudTh>
+					<MudTh>Action</MudTh>
+					<MudTh>Actor</MudTh>
+					<MudTh>Requester</MudTh>
+					<MudTh>AffectedIds</MudTh>
+					<MudTh>Detail</MudTh>
+					<MudTh>RemoteIp</MudTh>
+					<MudTh>@DateTimeConstant.ConvertTitle("Created", _useLocalTime)</MudTh>
+				</HeaderContent>
+				<RowTemplate>
+					<MudTd DataLabel="Id">@context.Id</MudTd>
+					<MudTd DataLabel="Action">
+						<MudChip T="string" Color="@GetActionColor(context.Action)" Size="Size.Small">
+							@context.Action
+						</MudChip>
+					</MudTd>
+					<MudTd DataLabel="Actor">@context.Actor</MudTd>
+					<MudTd DataLabel="Requester">@(context.Requester ?? "-")</MudTd>
+					<MudTd DataLabel="AffectedIds">
+						@if (string.IsNullOrEmpty(context.AffectedIds))
+						{
+							<span>-</span>
+						}
+						else
+						{
+							Int32 count = context.AffectedIds.Count(c => c == ',') + 1;
+							<MudTooltip Text="@context.AffectedIds" Placement="Placement.Top">
+								<MudText Typo="Typo.body2">@count ids</MudText>
+							</MudTooltip>
+						}
+					</MudTd>
+					<MudTd DataLabel="Detail">@(context.Detail ?? "-")</MudTd>
+					<MudTd DataLabel="RemoteIp">@(context.RemoteIp ?? "-")</MudTd>
+					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Created", _useLocalTime)>
+						@DateTimeConstant.ConvertDateTime(context.CreatedAtUtc, _useLocalTime)
+					</MudTd>
+				</RowTemplate>
+				<NoRecordsContent>
+					<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+						<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+						No records found.
+					</MudText>
+				</NoRecordsContent>
+				<PagerContent>
+					<MudTablePager PageSizeOptions="@(new Int32[] { 20, 50, 100 })" />
+				</PagerContent>
+			</MudTable>
+		</MudPaper>
+	</MudStack>
+</MudContainer>
+
+@code {
+	private MudTable<AuditLog> _table = default!;
+	private bool _useLocalTime = true;
+
+	private string? _filterAction;
+	private string _filterActor = string.Empty;
+	private string _filterRequester = string.Empty;
+
+	private static readonly string[] _allActions =
+	[
+		AuditLogAction.Alloc,
+		AuditLogAction.Renew,
+		AuditLogAction.Remove,
+		AuditLogAction.XApiKeyCreated,
+		AuditLogAction.XApiKeyDeleted,
+		AuditLogAction.IgnoreExpireChanged,
+		AuditLogAction.DescriptionUpdated,
+		AuditLogAction.UserRoleChanged,
+		AuditLogAction.UserEmailConfirmedChanged,
+		AuditLogAction.FeatureSwitchCreated,
+		AuditLogAction.FeatureSwitchUpdated,
+		AuditLogAction.FeatureSwitchDeleted,
+		AuditLogAction.FeatureSwitchToggled,
+		AuditLogAction.UserLockoutSet,
+		AuditLogAction.UserLockoutCleared,
+		AuditLogAction.XApiKeyDescriptionUpdated,
+		AuditLogAction.XApiKeyExpiredUpdated,
+		AuditLogAction.XApiWhitelistCreated,
+		AuditLogAction.XApiWhitelistDeleted,
+		AuditLogAction.XApiWhitelistDescriptionUpdated,
+		AuditLogAction.XApiWhitelistHostnameCreated,
+		AuditLogAction.XApiWhitelistHostnameDeleted,
+		AuditLogAction.XApiWhitelistHostnameDescriptionUpdated,
+	];
+
+	private async Task<TableData<AuditLog>> LoadServerDataAsync(TableState state, CancellationToken cancellationToken)
+	{
+		(List<AuditLog> items, Int32 totalItems) = await AuditLogRepository.QueryAsync(
+			string.IsNullOrWhiteSpace(_filterAction) ? null : _filterAction,
+			_filterActor,
+			_filterRequester,
+			state.Page,
+			state.PageSize,
+			cancellationToken);
+
+		return new TableData<AuditLog> { TotalItems = totalItems, Items = items };
+	}
+
+	private Task OnUseLocalTimeChanged()
+	{
+		_useLocalTime = !_useLocalTime;
+		return InvokeAsync(StateHasChanged);
+	}
+
+	private Task ApplyFilterAsync() => _table.ReloadServerData();
+
+	private Task ResetFilterAsync()
+	{
+		_filterAction = null;
+		_filterActor = string.Empty;
+		_filterRequester = string.Empty;
+		return _table.ReloadServerData();
+	}
+
+	private static Color GetActionColor(string action) => action switch
+	{
+		AuditLogAction.Alloc => Color.Success,
+		AuditLogAction.Renew => Color.Info,
+		AuditLogAction.Remove => Color.Warning,
+		AuditLogAction.XApiKeyCreated => Color.Primary,
+		AuditLogAction.XApiKeyDeleted => Color.Error,
+		AuditLogAction.IgnoreExpireChanged => Color.Tertiary,
+		AuditLogAction.DescriptionUpdated => Color.Secondary,
+		AuditLogAction.UserRoleChanged => Color.Primary,
+		AuditLogAction.UserEmailConfirmedChanged => Color.Info,
+		AuditLogAction.FeatureSwitchCreated => Color.Success,
+		AuditLogAction.FeatureSwitchUpdated => Color.Secondary,
+		AuditLogAction.FeatureSwitchDeleted => Color.Error,
+		AuditLogAction.FeatureSwitchToggled => Color.Tertiary,
+		AuditLogAction.UserLockoutSet => Color.Error,
+		AuditLogAction.UserLockoutCleared => Color.Warning,
+		AuditLogAction.XApiKeyDescriptionUpdated => Color.Secondary,
+		AuditLogAction.XApiKeyExpiredUpdated => Color.Tertiary,
+		AuditLogAction.XApiWhitelistCreated => Color.Success,
+		AuditLogAction.XApiWhitelistDeleted => Color.Error,
+		AuditLogAction.XApiWhitelistDescriptionUpdated => Color.Secondary,
+		AuditLogAction.XApiWhitelistHostnameCreated => Color.Success,
+		AuditLogAction.XApiWhitelistHostnameDeleted => Color.Error,
+		AuditLogAction.XApiWhitelistHostnameDescriptionUpdated => Color.Secondary,
+		_ => Color.Default,
+	};
+}

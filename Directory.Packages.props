@@ -1,0 +1,47 @@
+<Project>
+	<PropertyGroup>
+		<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+		<CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+		<NoWarn>
+			$(NoWarn);
+			ASPIREINTERACTION001;
+		</NoWarn>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageVersion Include="Asp.Versioning.Mvc" Version="10.0.0" />
+		<PackageVersion Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.0.0" />
+		<PackageVersion Include="Aspire.Hosting.Docker" Version="13.4.6" />
+		<PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.6" />
+		<PackageVersion Include="Aspire.Hosting.Seq" Version="13.4.6" />
+		<PackageVersion Include="Aspire.Seq" Version="13.4.6" />
+		<PackageVersion Include="Aspire.StackExchange.Redis" Version="13.4.6" />
+		<PackageVersion Include="Extensions.MudBlazor.StaticInput" Version="4.1.0" />
+		<PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
+		<PackageVersion Include="Google.Protobuf" Version="3.35.1" />
+		<PackageVersion Include="Grpc.Tools" Version="2.80.0" />
+		<PackageVersion Include="IdGen" Version="3.0.7" />
+		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+		<PackageVersion Include="xunit" Version="2.9.3" />
+		<PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+		<PackageVersion Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.7.0" />
+		<PackageVersion Include="Microsoft.Extensions.Identity.Stores" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.7.0" />
+		<!-- Microsoft.AspNetCore.OpenApi 10.0.9가 전이 종속성으로 끌어오는 Microsoft.OpenApi 2.0.0에
+			 취약점(GHSA-v5pm-xwqc-g5wc)이 있어, CentralPackageTransitivePinningEnabled로 패치 버전을 고정한다. -->
+		<PackageVersion Include="Microsoft.OpenApi" Version="2.7.5" />
+		<PackageVersion Include="MudBlazor" Version="9.7.0" />
+		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
+		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.16.0" />
+		<PackageVersion Include="SimpleBase" Version="5.6.1" />
+		<PackageVersion Include="StackExchange.Redis" Version="3.0.11" />
+		<PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
+		<PackageVersion Include="TickerQ" Version="10.4.0" />
+	</ItemGroup>
+</Project>

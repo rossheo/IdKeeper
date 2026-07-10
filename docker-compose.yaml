@@ -1,0 +1,145 @@
+services:
+  seq:
+    image: "docker.io/datalust/seq:2025.2"
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "True"
+    expose:
+      - "80"
+    volumes:
+      - type: "volume"
+        target: "/data"
+        source: "seq-data"
+        read_only: false
+    networks:
+      - "aspire"
+  redis:
+    image: "docker.io/library/redis:7-alpine"
+    command:
+      - "-c"
+      - "redis-server --requirepass $$REDIS_PASSWORD --save 60 1"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+    entrypoint:
+      - "/bin/sh"
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    expose:
+      - "6379"
+    volumes:
+      - type: "volume"
+        target: "/data"
+        source: "redis-data"
+        read_only: false
+    networks:
+      - "aspire"
+  apiservice:
+    image: "${APISERVICE_IMAGE}"
+    environment:
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      HTTP_PORTS: "${APISERVICE_PORT}"
+      TZ: "Asia/Seoul"
+      ConnectionStrings__redis: "redis:6379,password=${REDIS_PASSWORD}"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      REDIS_URI: "redis://:${REDIS_PASSWORD}@redis:6379"
+      ConnectionStrings__seq: "http://seq:80"
+      SEQ_HOST: "seq"
+      SEQ_PORT: "80"
+      SEQ_URI: "http://seq:80"
+    expose:
+      - "${APISERVICE_PORT}"
+    depends_on:
+      redis:
+        condition: "service_started"
+      seq:
+        condition: "service_started"
+    networks:
+      - "aspire"
+  snowflakeapiservice:
+    image: "${SNOWFLAKEAPISERVICE_IMAGE}"
+    environment:
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      HTTP_PORTS: "${SNOWFLAKEAPISERVICE_PORT}"
+      IDKEEPER_APIKEY: "${SNOWFLAKEAPISERVICE_XAPIKEY}"
+      APISERVICE_HTTP: "http://apiservice:${APISERVICE_PORT}"
+      services__apiservice__http__0: "http://apiservice:${APISERVICE_PORT}"
+      APISERVICE_HTTPS: "https://apiservice:${APISERVICE_PORT}"
+      ConnectionStrings__seq: "http://seq:80"
+      SEQ_HOST: "seq"
+      SEQ_PORT: "80"
+      SEQ_URI: "http://seq:80"
+    expose:
+      - "${SNOWFLAKEAPISERVICE_PORT}"
+    depends_on:
+      apiservice:
+        condition: "service_started"
+      seq:
+        condition: "service_started"
+    networks:
+      - "aspire"
+  web:
+    image: "${WEB_IMAGE}"
+    environment:
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      HTTP_PORTS: "${WEB_PORT}"
+      TZ: "Asia/Seoul"
+      RedisBackupSetting__RedisBackupDirectory: "/data/redis-backup"
+      ConnectionStrings__redis: "redis:6379,password=${REDIS_PASSWORD}"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      REDIS_URI: "redis://:${REDIS_PASSWORD}@redis:6379"
+      APISERVICE_HTTP: "http://apiservice:${APISERVICE_PORT}"
+      services__apiservice__http__0: "http://apiservice:${APISERVICE_PORT}"
+      APISERVICE_HTTPS: "https://apiservice:${APISERVICE_PORT}"
+      ConnectionStrings__seq: "http://seq:80"
+      SEQ_HOST: "seq"
+      SEQ_PORT: "80"
+      SEQ_URI: "http://seq:80"
+    ports:
+      - "${WEB_PORT}"
+    volumes:
+      - type: "volume"
+        target: "/data/redis-backup"
+        source: "redis-backup-data"
+        read_only: false
+    depends_on:
+      redis:
+        condition: "service_started"
+      apiservice:
+        condition: "service_started"
+      seq:
+        condition: "service_started"
+      redis-backup-data-init:
+        condition: "service_completed_successfully"
+    networks:
+      - "aspire"
+  redis-backup-data-init:
+    image: "busybox:latest"
+    command:
+      - "chown"
+      - "-R"
+      - "1654:1654"
+      - "/data/redis-backup"
+    volumes:
+      - type: "volume"
+        target: "/data/redis-backup"
+        source: "redis-backup-data"
+    restart: "no"
+networks:
+  aspire:
+    driver: "bridge"
+volumes:
+  seq-data:
+    driver: "local"
+  redis-data:
+    driver: "local"
+  redis-backup-data:
+    driver: "local"

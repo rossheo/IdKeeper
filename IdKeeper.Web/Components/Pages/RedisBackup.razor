@@ -1,0 +1,544 @@
+@page "/redisbackup"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Role.Administrator)]
+
+@inject RedisBackupService RedisBackupService
+@inject RedisBackupScheduleRepository RedisBackupScheduleRepository
+@inject RedisBackupSetting RedisBackupSetting
+@inject RedisBackupJob RedisBackupJob
+@inject RedisBackupMetadataStore RedisBackupMetadataStore
+@inject AuditLogRepository AuditLogRepository
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Redis Backup</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-2">Redis Backup</MudText>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudText Typo="Typo.h6" Class="mb-2">백업 설정</MudText>
+			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
+				예약 백업(디스크 저장)의 주기와 최대 보관 개수입니다. 저장하면 다음 5분 체크부터 바로 반영됩니다.
+			</MudText>
+
+			<MudStack Row="true" Spacing="4" AlignItems="AlignItems.End">
+				<MudSelect T="Int32" @bind-Value="_intervalMinutes" Label="백업 주기" Style="min-width: 200px;">
+					<MudSelectItem T="Int32" Value="15">15분마다</MudSelectItem>
+					<MudSelectItem T="Int32" Value="30">30분마다</MudSelectItem>
+					<MudSelectItem T="Int32" Value="60">1시간마다</MudSelectItem>
+					<MudSelectItem T="Int32" Value="360">6시간마다</MudSelectItem>
+					<MudSelectItem T="Int32" Value="720">12시간마다</MudSelectItem>
+					<MudSelectItem T="Int32" Value="1440">매일</MudSelectItem>
+					<MudSelectItem T="Int32" Value="2880">이틀마다</MudSelectItem>
+				</MudSelect>
+
+				<MudNumericField T="Int32" @bind-Value="_retentionCount" Label="최대 보관 개수"
+								  Min="1" Max="365" Style="max-width: 160px;" />
+
+				<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveScheduleAsync">
+					저장
+				</MudButton>
+			</MudStack>
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudText Typo="Typo.h6" Class="mb-2">내보내기 (Export)</MudText>
+			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
+				"IdKeeper/*" 전체 키를 NDJSON 파일로 내보냅니다.
+			</MudText>
+			<MudStack Row="true" Spacing="2">
+				<MudButton Variant="Variant.Filled"
+						   Color="Color.Primary"
+						   StartIcon="@Icons.Material.Filled.Download"
+						   Href="/redisbackup/export">
+					지금 내보내기
+				</MudButton>
+				<MudButton Variant="Variant.Outlined"
+						   Color="Color.Primary"
+						   StartIcon="@Icons.Material.Filled.Save"
+						   Disabled="@_creatingDiskBackup"
+						   OnClick="CreateDiskBackupAsync">
+					지금 디스크에 백업 생성
+				</MudButton>
+			</MudStack>
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudText Typo="Typo.h6" Class="mb-2">가져오기 (Import)</MudText>
+			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
+				⚠️ 파괴적 작업입니다. 기본값은 파일에 있는 키만 REPLACE(그 외 기존 키는 유지)하며,
+				"가져오기 전 전체 삭제"를 켜면 현재 "IdKeeper/*" 전체를 지우고 파일 내용으로 완전히
+				미러링합니다.
+			</MudText>
+
+			<MudStack Spacing="2">
+				<InputFile OnChange="OnFileSelectedAsync" accept=".ndjson,.jsonl,.txt" />
+
+				@if (_selectedFileName is not null)
+				{
+					<MudText Typo="Typo.body2">
+						선택된 파일: <b>@_selectedFileName</b> (@_selectedKeyCount 개 키)
+					</MudText>
+				}
+
+				<MudCheckBox T="bool" @bind-Value="_purgeBeforeImport" Label="가져오기 전 전체 삭제(완전 미러링)" Color="Color.Warning" />
+
+				<MudButton Variant="Variant.Filled"
+						   Color="Color.Error"
+						   StartIcon="@Icons.Material.Filled.Upload"
+						   Disabled="@(_selectedFileBytes is null || _importing)"
+						   OnClick="ConfirmAndImportUploadAsync">
+					가져오기 실행
+				</MudButton>
+
+				@if (_importing)
+				{
+					<MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+				}
+			</MudStack>
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2">
+				<MudText Typo="Typo.h6">백업 목록</MudText>
+				<MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="RefreshScheduledBackupsAsync" />
+			</MudStack>
+			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
+				디스크에 저장된 예약/수동 백업 파일 목록입니다. 위 "가져오기 전 전체 삭제" 설정을 그대로 사용합니다.
+			</MudText>
+
+			@if (_scheduledBackups.Count == 0)
+			{
+				<MudText Typo="Typo.body2" Color="Color.Secondary">저장된 백업 파일이 없습니다.</MudText>
+			}
+			else
+			{
+				<MudTable T="BackupRow"
+						  Items="@_scheduledBackups"
+						  Hover="true"
+						  Breakpoint="Breakpoint.Sm"
+						  Class="mudblazor-table-no-border"
+						  RowClassFunc="@((row, _) => GetSelectedRowClass(row))"
+						  OnRowClick="@((TableRowClickEventArgs<BackupRow> args) => SelectScheduledRow(args.Item!))">
+					<HeaderContent>
+						<MudTh>파일</MudTh>
+						<MudTh>Description</MudTh>
+						<MudTh>Keep</MudTh>
+					</HeaderContent>
+					<RowTemplate>
+						<MudTd DataLabel="파일">@context.File.Name (@FormatSize(context.File.Length))</MudTd>
+						<MudTd DataLabel="Description">
+							@if (_editingDescriptionKey == context.File.FullName)
+							{
+								<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+									<MudTextField @bind-Value="_editingDescription"
+												  Variant="Variant.Outlined"
+												  Placeholder="Description"
+												  Immediate="true"
+												  Class="mr-1" />
+									<MudIconButton Icon="@Icons.Material.Filled.Check"
+												   Color="Color.Success"
+												   Size="Size.Small"
+												   Disabled="@_savingMetadata"
+												   OnClick="@(() => SaveDescriptionAsync(context))" />
+									<MudIconButton Icon="@Icons.Material.Filled.Close"
+												   Color="Color.Default"
+												   Size="Size.Small"
+												   Disabled="@_savingMetadata"
+												   OnClick="@CancelEditDescription" />
+								</MudStack>
+							}
+							else
+							{
+								<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+									<MudText Typo="Typo.body2">
+										@(string.IsNullOrWhiteSpace(context.Description) ? "-" : context.Description)
+									</MudText>
+									<MudIconButton Icon="@Icons.Material.Filled.Edit"
+												   Color="Color.Primary"
+												   Size="Size.Small"
+												   Disabled="@(_editingDescriptionKey is not null)"
+												   OnClick="@(() => BeginEditDescription(context))" />
+								</MudStack>
+							}
+						</MudTd>
+						<MudTd DataLabel="Keep">
+							<MudSwitch T="bool"
+									   Value="@context.Keep"
+									   Color="Color.Warning"
+									   ValueChanged="@((bool v) => ToggleKeepAsync(context, v))" />
+						</MudTd>
+					</RowTemplate>
+				</MudTable>
+
+				<MudStack Row="true" Spacing="2" Class="mt-2">
+					<MudButton Variant="Variant.Filled"
+							   Color="Color.Error"
+							   StartIcon="@Icons.Material.Filled.SettingsBackupRestore"
+							   Disabled="@(_selectedScheduledFile is null || _importing)"
+							   OnClick="ConfirmAndImportScheduledAsync">
+						선택한 백업으로 복원하기
+					</MudButton>
+					<MudButton Variant="Variant.Outlined"
+							   Color="Color.Primary"
+							   StartIcon="@Icons.Material.Filled.Download"
+							   Disabled="@(_selectedScheduledFile is null)"
+							   Href="@GetSelectedScheduledDownloadUrl()">
+						선택한 백업 다운로드
+					</MudButton>
+				</MudStack>
+			}
+		</MudPaper>
+	</MudStack>
+</MudContainer>
+
+@code {
+	private const Int64 MaxUploadBytes = 200 * 1024 * 1024;
+
+	private string? _selectedFileName;
+	private byte[]? _selectedFileBytes;
+	private Int32 _selectedKeyCount;
+	private bool _purgeBeforeImport;
+	private bool _importing;
+	private bool _creatingDiskBackup;
+	private string _actor = string.Empty;
+
+	private Int32 _intervalMinutes = 1440;
+	private Int32 _retentionCount = 7;
+
+	private List<BackupRow> _scheduledBackups = [];
+	private string? _selectedScheduledFile;
+
+	private string? _editingDescriptionKey;
+	private string _editingDescription = string.Empty;
+	private bool _savingMetadata;
+
+	private sealed class BackupRow
+	{
+		public required FileInfo File { get; init; }
+		public string Description { get; set; } = string.Empty;
+		public bool Keep { get; set; }
+	}
+
+	protected override async Task OnInitializedAsync()
+	{
+		var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+		_actor = authState.User.Identity?.Name ?? "unknown";
+
+		RedisBackupSchedule schedule = await RedisBackupScheduleRepository.GetAsync();
+		_intervalMinutes = schedule.IntervalMinutes;
+		_retentionCount = schedule.RetentionCount;
+
+		await RefreshScheduledBackupsAsync();
+	}
+
+	private async Task RefreshScheduledBackupsAsync()
+	{
+		IReadOnlyList<FileInfo> files =
+			RedisBackupFileCatalog.ListSortedDescending(RedisBackupSetting.RedisBackupDirectory);
+
+		List<BackupRow> rows = [];
+		foreach (FileInfo file in files)
+		{
+			RedisBackupFileMetadata metadata =
+				await RedisBackupMetadataStore.GetAsync(RedisBackupSetting.RedisBackupDirectory, file.Name);
+			rows.Add(new BackupRow { File = file, Description = metadata.Description, Keep = metadata.Keep });
+		}
+		_scheduledBackups = rows;
+
+		bool selectedFileStillExists = _scheduledBackups.Any(r => r.File.FullName == _selectedScheduledFile);
+		if (_selectedScheduledFile is not null && !selectedFileStillExists)
+		{
+			_selectedScheduledFile = null;
+		}
+	}
+
+	private string GetSelectedRowClass(BackupRow row) =>
+		row.File.FullName == _selectedScheduledFile ? "selected-backup-row" : string.Empty;
+
+	private void SelectScheduledRow(BackupRow row) => _selectedScheduledFile = row.File.FullName;
+
+	private void BeginEditDescription(BackupRow row)
+	{
+		if (_editingDescriptionKey is not null)
+		{
+			return;
+		}
+		_editingDescriptionKey = row.File.FullName;
+		_editingDescription = row.Description;
+	}
+
+	private void CancelEditDescription()
+	{
+		_editingDescriptionKey = null;
+		_editingDescription = string.Empty;
+	}
+
+	private async Task SaveDescriptionAsync(BackupRow row)
+	{
+		if (_savingMetadata)
+		{
+			return;
+		}
+		_savingMetadata = true;
+
+		try
+		{
+			string description = _editingDescription.Trim();
+			await RedisBackupMetadataStore.SetAsync(
+				RedisBackupSetting.RedisBackupDirectory, row.File.Name, description, row.Keep);
+			row.Description = description;
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.RedisBackupFileMetadataChanged, _actor,
+				detail: $"{row.File.Name}: description updated");
+
+			Snackbar.Add("Description 저장 완료.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			CancelEditDescription();
+			_savingMetadata = false;
+			StateHasChanged();
+		}
+	}
+
+	private async Task ToggleKeepAsync(BackupRow row, bool keep)
+	{
+		try
+		{
+			await RedisBackupMetadataStore.SetAsync(
+				RedisBackupSetting.RedisBackupDirectory, row.File.Name, row.Description, keep);
+			row.Keep = keep;
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.RedisBackupFileMetadataChanged, _actor,
+				detail: $"{row.File.Name}: keep={keep}");
+
+			string message = keep ? "삭제 정책에서 제외되도록 설정했습니다." : "삭제 정책 대상으로 되돌렸습니다.";
+			Snackbar.Add(message, Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			StateHasChanged();
+		}
+	}
+
+	private string GetSelectedScheduledDownloadUrl()
+	{
+		if (_selectedScheduledFile is null)
+		{
+			return "#";
+		}
+
+		string fileName = Path.GetFileName(_selectedScheduledFile);
+		return $"/redisbackup/download?file={Uri.EscapeDataString(fileName)}";
+	}
+
+	private static string FormatSize(Int64 bytes) => bytes switch
+	{
+		< 1024 => $"{bytes} B",
+		< 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+		_ => $"{bytes / 1024.0 / 1024.0:F1} MB",
+	};
+
+	private async Task SaveScheduleAsync()
+	{
+		try
+		{
+			await RedisBackupScheduleRepository.SetAsync(_intervalMinutes, _retentionCount);
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.RedisBackupScheduleChanged, _actor,
+				detail: $"IntervalMinutes={_intervalMinutes}, RetentionCount={_retentionCount}");
+			Snackbar.Add("백업 설정을 저장했습니다.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+	}
+
+	private async Task CreateDiskBackupAsync()
+	{
+		if (_creatingDiskBackup)
+		{
+			return;
+		}
+
+		_creatingDiskBackup = true;
+		StateHasChanged();
+
+		try
+		{
+			RedisBackupSchedule schedule = await RedisBackupScheduleRepository.GetAsync();
+			Int32 count = await RedisBackupJob.RunBackupAsync(schedule.RetentionCount, CancellationToken.None);
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.RedisBackupExported, _actor,
+				detail: $"manual-disk:{count} keys");
+
+			Snackbar.Add($"디스크에 백업을 생성했습니다: {count}개 키.", Severity.Success);
+			await RefreshScheduledBackupsAsync();
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"백업 생성 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_creatingDiskBackup = false;
+			StateHasChanged();
+		}
+	}
+
+	private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+	{
+		try
+		{
+			await using MemoryStream stream = new();
+			await e.File.OpenReadStream(MaxUploadBytes).CopyToAsync(stream);
+			_selectedFileBytes = stream.ToArray();
+			_selectedFileName = e.File.Name;
+			_selectedKeyCount = CountLines(_selectedFileBytes);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"파일 읽기 실패: {ex.Message}", Severity.Error);
+			_selectedFileBytes = null;
+			_selectedFileName = null;
+			_selectedKeyCount = 0;
+		}
+	}
+
+	private static Int32 CountLines(byte[] content)
+	{
+		Int32 count = 0;
+		using StreamReader reader = new(new MemoryStream(content));
+		while (reader.ReadLine() is string line)
+		{
+			if (!string.IsNullOrWhiteSpace(line))
+			{
+				++count;
+			}
+		}
+		return count;
+	}
+
+	private async Task ConfirmAndImportUploadAsync()
+	{
+		if (_selectedFileBytes is null || _importing)
+		{
+			return;
+		}
+
+		Int32 currentKeyCount = await RedisBackupService.CountKeysAsync();
+
+		string message = _purgeBeforeImport
+			? $"현재 Redis의 \"IdKeeper/*\" 전체({currentKeyCount}개 키)를 삭제한 뒤 " +
+			  $"\"{_selectedFileName}\"의 {_selectedKeyCount}개 키로 완전히 대체합니다. 되돌릴 수 없습니다. 계속할까요?"
+			: $"\"{_selectedFileName}\"의 {_selectedKeyCount}개 키를 현재 Redis(전체 {currentKeyCount}개 키)에 " +
+			  $"REPLACE 방식으로 덮어씁니다(파일에 없는 기존 키는 유지). 계속할까요?";
+
+		bool? confirmed = await DialogService.ShowMessageBoxAsync(
+			"Redis 가져오기 확인",
+			message,
+			yesText: "가져오기 실행",
+			cancelText: "취소");
+
+		if (confirmed != true)
+		{
+			return;
+		}
+
+		_importing = true;
+		StateHasChanged();
+
+		try
+		{
+			await using MemoryStream stream = new(_selectedFileBytes);
+			Int32 importedCount = await RedisBackupService.ImportAsync(stream, _purgeBeforeImport);
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.RedisBackupImported, _actor,
+				detail: $"{importedCount} keys, purge={_purgeBeforeImport}");
+
+			Snackbar.Add($"가져오기 완료: {importedCount}개 키.", Severity.Success);
+			_selectedFileBytes = null;
+			_selectedFileName = null;
+			_selectedKeyCount = 0;
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"가져오기 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_importing = false;
+			StateHasChanged();
+		}
+	}
+
+	private async Task ConfirmAndImportScheduledAsync()
+	{
+		if (_selectedScheduledFile is null || _importing)
+		{
+			return;
+		}
+
+		string fileName = Path.GetFileName(_selectedScheduledFile);
+		Int32 currentKeyCount = await RedisBackupService.CountKeysAsync();
+
+		string message = _purgeBeforeImport
+			? $"현재 Redis의 \"IdKeeper/*\" 전체({currentKeyCount}개 키)를 삭제한 뒤 " +
+			  $"\"{fileName}\"의 내용으로 완전히 대체합니다. 되돌릴 수 없습니다. 계속할까요?"
+			: $"\"{fileName}\"의 키를 현재 Redis(전체 {currentKeyCount}개 키)에 " +
+			  $"REPLACE 방식으로 덮어씁니다(파일에 없는 기존 키는 유지). 계속할까요?";
+
+		bool? confirmed = await DialogService.ShowMessageBoxAsync(
+			"Redis 가져오기 확인",
+			message,
+			yesText: "가져오기 실행",
+			cancelText: "취소");
+
+		if (confirmed != true)
+		{
+			return;
+		}
+
+		_importing = true;
+		StateHasChanged();
+
+		try
+		{
+			await using FileStream stream = File.OpenRead(_selectedScheduledFile);
+			Int32 importedCount = await RedisBackupService.ImportAsync(stream, _purgeBeforeImport);
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.RedisBackupImported, _actor,
+				detail: $"scheduled:{fileName}, {importedCount} keys, purge={_purgeBeforeImport}");
+
+			Snackbar.Add($"가져오기 완료: {importedCount}개 키.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"가져오기 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_importing = false;
+			StateHasChanged();
+		}
+	}
+}

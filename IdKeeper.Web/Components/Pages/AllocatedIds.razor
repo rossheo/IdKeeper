@@ -1,0 +1,247 @@
+@page "/allocatedids"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = $"{Role.Administrator},{Role.Maintainer}")]
+
+@inject AllocatedIdRepository AllocatedIdRepository
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject AuditLogRepository AuditLogRepository
+
+<PageTitle>Allocated Ids</PageTitle>
+<MudButton OnClick="@OnUseLocalTimeChanged"
+		   Variant="Variant.Filled"
+		   DropShadow="false">시간 표시 변경</MudButton>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-2">Allocated Ids</MudText>
+	</MudItem>
+
+	<MudPaper Elevation="2" Class="pa-4 mt-4">
+		<MudDataGrid T="AllocatedId"
+					 Items="_items"
+					 Dense="true"
+					 Hover="true"
+					 Bordered="true"
+					 Striped="true"
+					 Filterable="true"
+					 Elevation="0">
+			<Columns>
+				<PropertyColumn Property="x => x.Id" Title="Id" />
+				<PropertyColumn Property="x => x.Requester" Title="Requester" />
+
+				<PropertyColumn Property="x => x.CreatedAtUtc"
+								Title=@DateTimeConstant.ConvertTitle("Created", _useLocalTime)>
+					<CellTemplate Context="cellContext">
+						@DateTimeConstant.ConvertDateTime(cellContext.Item.CreatedAtUtc, _useLocalTime)
+					</CellTemplate>
+				</PropertyColumn>
+
+				<PropertyColumn Property="x => x.UpdatedAtUtc"
+								Title=@DateTimeConstant.ConvertTitle("Updated", _useLocalTime)>
+					<CellTemplate Context="cellContext">
+						@($"{DateTimeConstant.ConvertDateTime(cellContext.Item.UpdatedAtUtc, _useLocalTime)}" +
+						  $" ({DateTimeConstant.GetElapsedTime(cellContext.Item.UpdatedAtUtc)})")
+					</CellTemplate>
+				</PropertyColumn>
+
+				<PropertyColumn Property="x => x.ExpiredAtUtc"
+								Title=@DateTimeConstant.ConvertTitle("Expired", _useLocalTime)>
+					<CellTemplate Context="cellContext">
+						@($"{DateTimeConstant.ConvertDateTime(cellContext.Item.ExpiredAtUtc, _useLocalTime)} ({DateTimeConstant.GetRemainTime(cellContext.Item.ExpiredAtUtc)})")
+					</CellTemplate>
+				</PropertyColumn>
+
+				<PropertyColumn Property="x => x.IgnoreExpire"
+								Title="Ignore Expire">
+					<CellTemplate Context="cellContext">
+						<MudSwitch T="bool"
+								   Disabled="(!_isAdmin) || _updatingIds.Contains(cellContext.Item.Id)"
+								   Color="Color.Primary"
+								   Value="cellContext.Item.IgnoreExpire"
+								   ValueChanged="@(async (bool isChecked) => await OnIgnoreExpireChangedAsync(cellContext.Item, isChecked))" />
+					</CellTemplate>
+				</PropertyColumn>
+
+				<TemplateColumn Title="Description" Sortable="false" Filterable="false">
+					<CellTemplate Context="cellContext">
+						@if (_editingDescriptionId == cellContext.Item.Id)
+						{
+							<div class="d-flex align-center gap-1">
+								<MudTextField T="string"
+											  @bind-Value="_editingDescriptionValue"
+											  MaxLength="256"
+											  Immediate="true"
+											  Style="min-width: 180px;"
+											  Variant="Variant.Outlined"
+											  Margin="Margin.Dense" />
+								<MudIconButton Icon="@Icons.Material.Filled.Check"
+											   Color="Color.Success"
+											   Size="Size.Small"
+											   Disabled="_savingDescription"
+											   OnClick="@(() => SaveDescriptionAsync(cellContext.Item))" />
+								<MudIconButton Icon="@Icons.Material.Filled.Close"
+											   Color="Color.Default"
+											   Size="Size.Small"
+											   OnClick="CancelDescriptionEdit" />
+							</div>
+						}
+						else
+						{
+							<div class="d-flex align-center gap-1">
+								<span>@(cellContext.Item.Description ?? "")</span>
+								<MudIconButton Icon="@Icons.Material.Filled.Edit"
+											   Size="Size.Small"
+											   Color="Color.Default"
+											   OnClick="@(() => StartDescriptionEdit(cellContext.Item))" />
+							</div>
+						}
+					</CellTemplate>
+				</TemplateColumn>
+			</Columns>
+
+			<NoRecordsContent>
+				<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+					<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+					No records found.
+				</MudText>
+			</NoRecordsContent>
+			<PagerContent>
+				<MudDataGridPager T="AllocatedId" />
+			</PagerContent>
+		</MudDataGrid>
+		@if (_isLoading)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+		}
+	</MudPaper>
+</MudContainer>
+
+@code {
+	private List<AllocatedId> _items = [];
+	private bool _isLoading = true;
+	private bool _useLocalTime = true;
+	private readonly HashSet<Int32> _updatingIds = new();
+	private bool _isAdmin;
+	private string _actor = string.Empty;
+
+	private Int32? _editingDescriptionId;
+	private string? _editingDescriptionValue;
+	private bool _savingDescription;
+
+	protected override async Task OnInitializedAsync()
+	{
+		var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+		_isAdmin = authState.User.IsInRole(Role.Administrator);
+		_actor = authState.User.Identity?.Name ?? "unknown";
+
+		try
+		{
+			Int32 maxNodeIdInclusive = (1 << SnowflakeConstant.BitCountOfNodeId) - 1;
+			_items = [.. (await AllocatedIdRepository.GetAllAsync(maxNodeIdInclusive)).OrderBy(r => r.Id)];
+		}
+		finally
+		{
+			_isLoading = false;
+		}
+	}
+
+	private Task OnUseLocalTimeChanged()
+	{
+		_useLocalTime = !_useLocalTime;
+		return InvokeAsync(StateHasChanged);
+	}
+
+	private void StartDescriptionEdit(AllocatedId item)
+	{
+		_editingDescriptionId = item.Id;
+		_editingDescriptionValue = item.Description;
+	}
+
+	private void CancelDescriptionEdit()
+	{
+		_editingDescriptionId = null;
+		_editingDescriptionValue = null;
+	}
+
+	private async Task SaveDescriptionAsync(AllocatedId item)
+	{
+		_savingDescription = true;
+		try
+		{
+			string? description = string.IsNullOrWhiteSpace(_editingDescriptionValue)
+				? null
+				: _editingDescriptionValue.Trim();
+
+			bool found = await AllocatedIdRepository.UpdateDescriptionAsync(item.Id, description, _actor);
+			if (!found)
+			{
+				Snackbar.Add($"Id {item.Id} 를 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.DescriptionUpdated, _actor, affectedIds: [item.Id], detail: description);
+
+			item.Description = description;
+			Snackbar.Add($"Id {item.Id} Description 저장됨", Severity.Success);
+			_editingDescriptionId = null;
+			_editingDescriptionValue = null;
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_savingDescription = false;
+			await InvokeAsync(StateHasChanged);
+		}
+	}
+
+	private async Task OnIgnoreExpireChangedAsync(AllocatedId item, bool isChecked)
+	{
+		if (!_isAdmin)
+		{
+			Snackbar.Add("편집 권한이 없습니다. 관리자만 수정할 수 있습니다.", Severity.Warning);
+			await InvokeAsync(StateHasChanged);
+			return;
+		}
+
+		if (item is null) return;
+
+		if (_updatingIds.Contains(item.Id))
+		{
+			return;
+		}
+
+		_updatingIds.Add(item.Id);
+		var original = item.IgnoreExpire;
+
+		try
+		{
+			item.IgnoreExpire = isChecked;
+
+			bool found = await AllocatedIdRepository.ToggleIgnoreExpireAsync(item.Id, isChecked, _actor);
+			if (!found)
+			{
+				item.IgnoreExpire = original;
+				Snackbar.Add($"Id {item.Id} 를 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			Snackbar.Add(
+				$"Id {item.Id} IgnoreExpire {(isChecked ? "활성화" : "비활성화")}됨", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			item.IgnoreExpire = original;
+			Snackbar.Add($"변경 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_updatingIds.Remove(item.Id);
+			await InvokeAsync(StateHasChanged);
+		}
+	}
+}

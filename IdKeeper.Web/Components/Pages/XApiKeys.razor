@@ -1,0 +1,395 @@
+@page "/xapikeys"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = $"{Role.Administrator},{Role.Maintainer}")]
+
+@inject XApiKeyRepository XApiKeyRepository
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@inject AuditLogRepository AuditLogRepository
+
+<PageTitle>XApiKeys</PageTitle>
+<MudButton OnClick="@OnUseLocalTimeChanged"
+		   Variant="Variant.Filled"
+		   DropShadow="false">시간 표시 변경</MudButton>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-2">XApiKeys</MudText>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudButton Variant="Variant.Filled"
+				   Color="Color.Primary"
+				   StartIcon="@Icons.Material.Filled.Add"
+				   Size="Size.Large"
+				   Class="mt-4"
+				   OnClick="GenerateNewApiKeyAsync">
+			ADD NEW API KEY
+		</MudButton>
+
+		<MudPaper Elevation="2"
+				  Class="pa-4 mt-4">
+			<MudTable T="XApiKey"
+					  Items="@_items"
+					  @key="(_editingDescriptionId, _editingExpiredId)"
+					  Hover="true"
+					  Breakpoint="Breakpoint.Sm"
+					  Class="mudblazor-table-no-border">
+				<HeaderContent>
+					<MudTh>Id</MudTh>
+					<MudTh>ApiKey</MudTh>
+					<MudTh>Owner</MudTh>
+					<MudTh>Description</MudTh>
+					<MudTh>@DateTimeConstant.ConvertTitle("Created", _useLocalTime)</MudTh>
+					<MudTh>@DateTimeConstant.ConvertTitle("Expired", _useLocalTime)</MudTh>
+					<MudTh>Actions</MudTh>
+				</HeaderContent>
+				<RowTemplate>
+					<MudTd DataLabel="Id">@context.Id</MudTd>
+					<MudTd DataLabel="ApiKey">
+						<MudText Typo="Typo.body2">@MaskConstant.MaskApiKey(context.ApiKey)</MudText>
+						<MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+									   OnClick="@(() => CopyApiKeyAsync(context.ApiKey))"
+									   Class="ml-2" Color="Color.Info" />
+					</MudTd>
+					<MudTd DataLabel="Owner">@context.Owner</MudTd>
+					<MudTd DataLabel="Description">
+						@if (_editingDescriptionId == context.Id)
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudTextField @bind-Value="_editingDescription"
+											  Variant="Variant.Outlined"
+											  Placeholder="Description"
+											  Immediate="true"
+											  Class="mr-1" />
+								<MudIconButton Icon="@Icons.Material.Filled.Check"
+											   Color="Color.Success"
+											   Size="Size.Small"
+											   Disabled="@_savingDescription"
+											   OnClick="@(() => SaveDescriptionAsync(context.Id))" />
+								<MudIconButton Icon="@Icons.Material.Filled.Close"
+											   Color="Color.Default"
+											   Size="Size.Small"
+											   Disabled="@_savingDescription"
+											   OnClick="@CancelEditDescription" />
+							</MudStack>
+						}
+						else
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudText Typo="Typo.body2">
+									@((string.IsNullOrWhiteSpace(context.Description) ? "-" : context.Description))
+								</MudText>
+								<MudIconButton Icon="@Icons.Material.Filled.Edit"
+											   Color="Color.Primary"
+											   Size="Size.Small"
+											   Disabled="@(_editingDescriptionId.HasValue || _editingExpiredId.HasValue)"
+											   OnClick="@(() => BeginEditDescription(context))" />
+							</MudStack>
+						}
+					</MudTd>
+					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Created", _useLocalTime)>
+						@DateTimeConstant.ConvertDateTime(context.CreatedAtUtc, _useLocalTime)
+					</MudTd>
+					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Expired", _useLocalTime)>
+						@if (_editingExpiredId == context.Id)
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudDatePicker @bind-Date="_editingExpiredAt"
+											   DateFormat="yyyy-MM-dd"
+											   Editable="true"
+											   OpenTo="OpenTo.Date"
+											   Class="mr-1" />
+								<MudIconButton Icon="@Icons.Material.Filled.Check"
+											   Color="Color.Success"
+											   Size="Size.Small"
+											   Disabled="@_savingExpired"
+											   OnClick="@(() => SaveExpiredAsync(context.Id))" />
+								<MudIconButton Icon="@Icons.Material.Filled.Close"
+											   Color="Color.Default"
+											   Size="Size.Small"
+											   Disabled="@_savingExpired"
+											   OnClick="@CancelEditExpired" />
+								<MudIconButton Icon="@Icons.Material.Filled.Backspace"
+											   Color="Color.Warning"
+											   Size="Size.Small"
+											   Disabled="@_savingExpired"
+											   OnClick="@ClearExpired" />
+							</MudStack>
+						}
+						else
+						{
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudText Typo="Typo.body2">
+									@(context.ExpiredAtUtc is null
+									? "-"
+									: $"{DateTimeConstant.ConvertDateTime(context.ExpiredAtUtc, _useLocalTime)}" +
+						  $" ({DateTimeConstant.GetRemainTime(context.ExpiredAtUtc)})")
+								</MudText>
+								<MudIconButton Icon="@Icons.Material.Filled.Edit"
+											   Color="Color.Primary"
+											   Size="Size.Small"
+											   Disabled="@(_editingDescriptionId.HasValue || _editingExpiredId.HasValue)"
+											   OnClick="@(() => BeginEditExpired(context))" />
+							</MudStack>
+						}
+					</MudTd>
+					<MudTd DataLabel="Actions">
+						<MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+									   Disabled="@(_editingDescriptionId == context.Id || _editingExpiredId == context.Id)"
+									   OnClick="@(() => DeleteApiKeyAsync(context.Id))" />
+					</MudTd>
+				</RowTemplate>
+				<NoRecordsContent>
+					<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+						<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+						No records found.
+					</MudText>
+				</NoRecordsContent>
+			</MudTable>
+		@if (_isLoading)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+		}
+		</MudPaper>
+	</MudStack>
+</MudContainer>
+
+@code {
+	[CascadingParameter]
+	private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+	private List<XApiKey> _items = [];
+	private bool _isLoading = true;
+	private bool _useLocalTime = true;
+	private string _currentUserName = string.Empty;
+
+	#region Description Edit
+	private Int64? _editingDescriptionId;
+	private string? _editingDescription;
+	private bool _savingDescription;
+	#endregion
+
+	#region ExpiredAt Edit
+	private Int64? _editingExpiredId;
+	private DateTime? _editingExpiredAt;
+	private bool _savingExpired;
+	#endregion
+
+	protected override async Task OnInitializedAsync()
+	{
+		var authState = await AuthenticationStateTask;
+		var user = authState.User;
+		bool isAdmin = user.IsInRole(Role.Administrator);
+		_currentUserName = user.Identity?.IsAuthenticated == true
+			? user.Identity.Name ?? "(unnamed)"
+			: "anonymous";
+
+		try
+		{
+			List<XApiKey> all = await XApiKeyRepository.GetAllAsync();
+			_items = [.. (isAdmin ? all : all.Where(r => r.Owner == _currentUserName)).OrderBy(r => r.Id)];
+		}
+		finally
+		{
+			_isLoading = false;
+		}
+	}
+
+	private Task OnUseLocalTimeChanged()
+	{
+		_useLocalTime = !_useLocalTime;
+		return InvokeAsync(StateHasChanged);
+	}
+
+	private async Task CopyApiKeyAsync(string apiKey)
+	{
+		await JSRuntime.InvokeVoidAsync("clipboardCopy.copyText", apiKey);
+		Snackbar.Add("API Key copied to clipboard!", Severity.Info);
+	}
+
+	private async Task GenerateNewApiKeyAsync()
+	{
+		string apiKey = XApiKeyGenerator.GetIdKeeperApiKey();
+		string ownerName = _currentUserName;
+		DateTime utcNow = DateTime.UtcNow;
+
+		try
+		{
+			Int64? id = await XApiKeyRepository.CreateAsync(
+				apiKey, ownerName, description: null, expiredAtUtc: utcNow + TimeSpan.FromDays(365));
+			if (id is null)
+			{
+				Snackbar.Add($"ApiKey 추가 실패.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(AuditLogAction.XApiKeyCreated, ownerName);
+
+			XApiKey? created = await XApiKeyRepository.GetAsync(id.Value);
+			if (created is not null)
+			{
+				_items.Insert(0, created);
+				StateHasChanged();
+			}
+
+			Snackbar.Add($"ApiKey 추가 완료 (Id: {id})", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"Exception {ex.Message}", Severity.Error);
+		}
+	}
+
+	private async Task DeleteApiKeyAsync(Int64 id)
+	{
+		if (_editingDescriptionId.HasValue || _editingExpiredId.HasValue)
+		{
+			Snackbar.Add("편집 중에는 삭제할 수 없습니다.", Severity.Info);
+			return;
+		}
+
+		XApiKey? existing = await XApiKeyRepository.GetAsync(id);
+		if (existing is null)
+		{
+			Snackbar.Add($"삭제 대상이 없습니다 (Id: {id})", Severity.Info);
+			return;
+		}
+
+		await XApiKeyRepository.DeleteAsync(id);
+		await AuditLogRepository.AppendAsync(AuditLogAction.XApiKeyDeleted, _currentUserName);
+
+		Int32 index = _items.FindIndex(x => x.Id == id);
+		if (index >= 0)
+		{
+			_items.RemoveAt(index);
+			StateHasChanged();
+		}
+
+		Snackbar.Add($"삭제 완료 (Id: {id})", Severity.Warning);
+	}
+
+	#region Description Edit
+	private void BeginEditDescription(XApiKey item)
+	{
+		if (_editingDescriptionId.HasValue || _editingExpiredId.HasValue) return;
+		_editingDescriptionId = item.Id;
+		_editingDescription = item.Description;
+	}
+
+	private void CancelEditDescription()
+	{
+		_editingDescriptionId = null;
+		_editingDescription = null;
+		_savingDescription = false;
+	}
+
+	private async Task SaveDescriptionAsync(Int64 id)
+	{
+		if (_savingDescription) return;
+		_savingDescription = true;
+
+		try
+		{
+			string? description = string.IsNullOrWhiteSpace(_editingDescription)
+				? null
+				: _editingDescription!.Trim();
+
+			bool found = await XApiKeyRepository.UpdateDescriptionAsync(id, description);
+			if (!found)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.XApiKeyDescriptionUpdated, _currentUserName, detail: description);
+
+			var local = _items.FirstOrDefault(x => x.Id == id);
+			if (local != null)
+				local.Description = description;
+
+			Snackbar.Add("Description 저장 완료.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			CancelEditDescription();
+		}
+	}
+	#endregion
+
+	#region ExpiredAt Edit
+	private void BeginEditExpired(XApiKey item)
+	{
+		if (_editingDescriptionId.HasValue || _editingExpiredId.HasValue) return;
+
+		_editingExpiredId = item.Id;
+
+		// 기존 UTC -> Local 변환 (DatePicker 는 Local 날짜 기반)
+		if (item.ExpiredAtUtc is not null)
+		{
+			var utc = DateTime.SpecifyKind(item.ExpiredAtUtc.Value, DateTimeKind.Utc);
+			_editingExpiredAt = utc.ToLocalTime();
+		}
+		else
+		{
+			_editingExpiredAt = null;
+		}
+	}
+
+	private void CancelEditExpired()
+	{
+		_editingExpiredId = null;
+		_editingExpiredAt = null;
+		_savingExpired = false;
+	}
+
+	private void ClearExpired()
+	{
+		if (_savingExpired) return;
+		_editingExpiredAt = null;
+	}
+
+	private async Task SaveExpiredAsync(Int64 id)
+	{
+		if (_savingExpired) return;
+		_savingExpired = true;
+
+		try
+		{
+			DateTime? expiredAtUtc = _editingExpiredAt is null
+				? null
+				: DateTime.SpecifyKind(_editingExpiredAt.Value, DateTimeKind.Local).ToUniversalTime();
+
+			bool found = await XApiKeyRepository.UpdateExpiredAtAsync(id, expiredAtUtc);
+			if (!found)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.XApiKeyExpiredUpdated, _currentUserName,
+				detail: expiredAtUtc?.ToString("yyyy-MM-dd") ?? "null");
+
+			var localItem = _items.FirstOrDefault(x => x.Id == id);
+			if (localItem is not null)
+				localItem.ExpiredAtUtc = expiredAtUtc;
+
+			Snackbar.Add("만료일 저장 완료.", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"만료일 저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			CancelEditExpired();
+		}
+	}
+	#endregion
+}

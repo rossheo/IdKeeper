@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\IdKeeper.Common\IdKeeper.Common.csproj" />
+		<ProjectReference Include="..\IdKeeper.RedisCommon\IdKeeper.Database.Redis.csproj" />
+		<ProjectReference Include="..\IdKeeper.ServiceDefaults\IdKeeper.ServiceDefaults.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+		<PackageReference Include="Asp.Versioning.Mvc" />
+		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+		<PackageReference Include="FluentValidation.AspNetCore" />
+		<PackageReference Include="TickerQ" />
+		<PackageReference Include="Aspire.Seq" />
+	</ItemGroup>
+</Project>

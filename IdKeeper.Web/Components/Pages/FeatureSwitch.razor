@@ -1,0 +1,300 @@
+@page "/featureswitch"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Role.Administrator)]
+
+@using DbFeatureSwitch = IdKeeper.Database.Redis.Models.FeatureSwitch
+@inject FeatureSwitchRepository FeatureSwitchRepository
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject AuditLogRepository AuditLogRepository
+
+<PageTitle>FeatureSwitch</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-2">FeatureSwitch</MudText>
+	</MudItem>
+
+	<MudStack Spacing="4">
+		<MudPaper Elevation="2" Class="pa-4 mt-4">
+			<MudTable T="DbFeatureSwitch"
+					  Items="@_items"
+					  Hover="true"
+					  Breakpoint="Breakpoint.Sm"
+					  Class="mudblazor-table-no-border">
+				<ToolBarContent>
+					<MudSpacer />
+					<MudButton Variant="Variant.Filled"
+							   Color="Color.Primary"
+							   StartIcon="@Icons.Material.Filled.Add"
+							   Disabled="@(_editingKey is not null || _isAddingNew)"
+							   OnClick="@BeginAddNew">
+						추가
+					</MudButton>
+				</ToolBarContent>
+				<HeaderContent>
+					<MudTh>
+						<MudTableSortLabel InitialDirection="SortDirection.Ascending"
+										   SortBy="new Func<DbFeatureSwitch, object>(x => x.Key)">
+							Key
+						</MudTableSortLabel>
+					</MudTh>
+					<MudTh>활성화</MudTh>
+					<MudTh>Description</MudTh>
+					<MudTh></MudTh>
+				</HeaderContent>
+				<RowTemplate>
+					@if (_editingKey == context.Key)
+					{
+						<MudTd DataLabel="Key">
+							<MudText Typo="Typo.body2">@_editKey</MudText>
+						</MudTd>
+						<MudTd DataLabel="활성화">
+							<MudSwitch @bind-Value="_editIsEnabled" Color="Color.Success" />
+						</MudTd>
+						<MudTd DataLabel="Description">
+							<MudTextField @bind-Value="_editDescription" Variant="Variant.Outlined" Margin="Margin.Dense" />
+						</MudTd>
+						<MudTd>
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudIconButton Icon="@Icons.Material.Filled.Check"
+											   Color="Color.Success"
+											   Size="Size.Small"
+											   Disabled="@_saving"
+											   OnClick="@SaveAsync" />
+								<MudIconButton Icon="@Icons.Material.Filled.Close"
+											   Color="Color.Default"
+											   Size="Size.Small"
+											   Disabled="@_saving"
+											   OnClick="@CancelEdit" />
+							</MudStack>
+						</MudTd>
+					}
+					else
+					{
+						<MudTd DataLabel="Key">@context.Key</MudTd>
+						<MudTd DataLabel="활성화">
+							<MudSwitch Value="@context.IsEnabled"
+									   Color="Color.Success"
+									   Disabled="@(_editingKey is not null || _isAddingNew)"
+									   ValueChanged="@((bool v) => ToggleAsync(context, v))" />
+						</MudTd>
+						<MudTd DataLabel="Description">@context.Description</MudTd>
+						<MudTd>
+							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+								<MudIconButton Icon="@Icons.Material.Filled.Edit"
+											   Color="Color.Primary"
+											   Size="Size.Small"
+											   Disabled="@(_editingKey is not null || _isAddingNew)"
+											   OnClick="@(() => BeginEdit(context))" />
+								<MudIconButton Icon="@Icons.Material.Filled.Delete"
+											   Color="Color.Error"
+											   Size="Size.Small"
+											   Disabled="@(_editingKey is not null || _isAddingNew)"
+											   OnClick="@(() => DeleteAsync(context))" />
+							</MudStack>
+						</MudTd>
+					}
+				</RowTemplate>
+				<NoRecordsContent>
+					<MudText Typo="Typo.h6" Class="d-flex justify-center py-4">
+						<MudIcon Icon="@Icons.Material.Filled.Info" Color="Color.Primary" Class="mr-2" />
+						No records found.
+					</MudText>
+				</NoRecordsContent>
+			</MudTable>
+		@if (_isLoading)
+		{
+			<MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+		}
+		</MudPaper>
+
+		@if (_isAddingNew)
+		{
+			<MudPaper Elevation="2" Class="pa-4">
+				<MudStack Spacing="2">
+					<MudText Typo="Typo.h6">신규 FeatureSwitch 추가</MudText>
+					<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+						<MudTextField @bind-Value="_editKey" Variant="Variant.Outlined" Label="Key" Immediate="true" />
+						<MudSwitch @bind-Value="_editIsEnabled" Color="Color.Success" Label="활성화" />
+						<MudTextField @bind-Value="_editDescription" Variant="Variant.Outlined" Label="Description (선택)" Immediate="true" />
+						<MudIconButton Icon="@Icons.Material.Filled.Check"
+									   Color="Color.Success"
+									   Disabled="@_saving"
+									   OnClick="@SaveAsync" />
+						<MudIconButton Icon="@Icons.Material.Filled.Close"
+									   Color="Color.Default"
+									   Disabled="@_saving"
+									   OnClick="@CancelEdit" />
+					</MudStack>
+				</MudStack>
+			</MudPaper>
+		}
+	</MudStack>
+</MudContainer>
+
+@code {
+	private List<DbFeatureSwitch> _items = [];
+	private bool _isLoading = true;
+	private string _actor = string.Empty;
+
+	#region Edit State
+	private string? _editingKey;
+	private bool _isAddingNew;
+	private string _editKey = string.Empty;
+	private bool _editIsEnabled;
+	private string? _editDescription;
+	private bool _saving;
+	#endregion
+
+	protected override async Task OnInitializedAsync()
+	{
+		var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+		_actor = authState.User.Identity?.Name ?? "unknown";
+		try { await LoadAsync(); }
+		finally { _isLoading = false; }
+	}
+
+	private async Task LoadAsync()
+	{
+		_items = [.. (await FeatureSwitchRepository.GetAllAsync()).OrderBy(r => r.Key)];
+	}
+
+	#region Toggle
+	private async Task ToggleAsync(DbFeatureSwitch item, bool isEnabled)
+	{
+		if (_saving) return;
+		_saving = true;
+
+		try
+		{
+			bool found = await FeatureSwitchRepository.UpdateAsync(item.Key, isEnabled, item.Description);
+			if (!found)
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.FeatureSwitchToggled, _actor,
+				detail: $"{item.Key}={(isEnabled ? "enabled" : "disabled")}");
+			item.IsEnabled = isEnabled;
+			Snackbar.Add($"{item.Key}: {(isEnabled ? "활성화" : "비활성화")}", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_saving = false;
+		}
+	}
+	#endregion
+
+	#region Edit
+	private void BeginEdit(DbFeatureSwitch item)
+	{
+		if (_editingKey is not null || _isAddingNew) return;
+		_editingKey = item.Key;
+		_editKey = item.Key;
+		_editIsEnabled = item.IsEnabled;
+		_editDescription = item.Description;
+	}
+
+	private void BeginAddNew()
+	{
+		if (_editingKey is not null || _isAddingNew) return;
+		_isAddingNew = true;
+		_editKey = string.Empty;
+		_editIsEnabled = false;
+		_editDescription = null;
+	}
+
+	private void CancelEdit()
+	{
+		_editingKey = null;
+		_isAddingNew = false;
+		_saving = false;
+	}
+
+	private async Task SaveAsync()
+	{
+		if (_saving) return;
+		_saving = true;
+
+		try
+		{
+			if (string.IsNullOrWhiteSpace(_editKey))
+			{
+				Snackbar.Add("Key는 필수 입력입니다.", Severity.Warning);
+				return;
+			}
+
+			if (_isAddingNew)
+			{
+				bool created = await FeatureSwitchRepository.CreateAsync(_editKey, _editIsEnabled, _editDescription);
+				if (!created)
+				{
+					Snackbar.Add($"이미 존재하는 Key 입니다: {_editKey}", Severity.Error);
+					return;
+				}
+
+				await AuditLogRepository.AppendAsync(AuditLogAction.FeatureSwitchCreated, _actor, detail: _editKey);
+				Snackbar.Add($"추가 완료: {_editKey}", Severity.Success);
+			}
+			else
+			{
+				bool found = await FeatureSwitchRepository.UpdateAsync(_editKey, _editIsEnabled, _editDescription);
+				if (!found)
+				{
+					Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+					return;
+				}
+
+				await AuditLogRepository.AppendAsync(AuditLogAction.FeatureSwitchUpdated, _actor, detail: _editKey);
+				Snackbar.Add($"저장 완료: {_editKey}", Severity.Success);
+			}
+
+			await LoadAsync();
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			CancelEdit();
+			StateHasChanged();
+		}
+	}
+
+	private async Task DeleteAsync(DbFeatureSwitch item)
+	{
+		if (_saving) return;
+		_saving = true;
+
+		try
+		{
+			if (!await FeatureSwitchRepository.ExistsAsync(item.Key))
+			{
+				Snackbar.Add("대상을 찾을 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await FeatureSwitchRepository.DeleteAsync(item.Key);
+			await AuditLogRepository.AppendAsync(AuditLogAction.FeatureSwitchDeleted, _actor, detail: item.Key);
+			_items.Remove(item);
+			Snackbar.Add($"삭제 완료: {item.Key}", Severity.Success);
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"삭제 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_saving = false;
+			StateHasChanged();
+		}
+	}
+	#endregion
+}

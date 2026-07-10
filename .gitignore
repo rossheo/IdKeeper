@@ -1,0 +1,18 @@
+/**/.vs/
+/**/bin/Debug/
+/**/bin/Release/
+/**/obj/
+/**/*.csproj.user
+/**/.aspire/
+/**/aspire-output/
+
+# 방어적 규칙 — 실수로 비밀/인증서가 커밋되는 것을 막기 위함
+secrets/
+*.env
+*.pfx
+*.pem
+*.key
+
+# 이 브랜치(공개 저장소용)는 k8s/(사내 GitLab 배포 전용, 인프라 정보 포함)를 제외한다.
+# 실수로 다시 커밋되는 것을 막기 위한 방어적 규칙 — 사내 GitLab 저장소에는 이 규칙이 없다.
+k8s/

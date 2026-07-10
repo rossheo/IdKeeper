@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "IdKeeper.AppHost/IdKeeper.AppHost.csproj"
+  }
+}
