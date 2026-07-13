@@ -103,58 +103,6 @@
 		</MudPaper>
 
 		<MudPaper Elevation="2" Class="pa-4">
-			<MudText Typo="Typo.h6" Class="mb-2">Redis 마이그레이션</MudText>
-			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
-				이 Redis의 "IdKeeper/*" 전체를 다른 Redis로 직접 이관합니다.
-				DUMP/RESTORE(백업 가져오기)는 Redis 버전이 다르면
-				"DUMP payload version or checksum are wrong" 오류로 실패할 수 있어,
-				타입별 네이티브 커맨드(GET/HGETALL/SMEMBERS 등)로 값을 읽고 써서
-				버전에 관계없이 동작합니다.
-			</MudText>
-
-			<MudStack Spacing="2">
-				<MudStack Row="true" Spacing="2">
-					<MudTextField T="string" @bind-Value="_migrationHost" Label="Host" Style="min-width: 260px;" />
-					<MudNumericField T="Int32" @bind-Value="_migrationPort" Label="Port" Style="max-width: 120px;" />
-					<MudTextField T="string" @bind-Value="_migrationPassword" Label="Password"
-								   InputType="InputType.Password" Style="min-width: 200px;" />
-				</MudStack>
-
-				<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-					<MudButton Variant="Variant.Outlined"
-							   Color="Color.Primary"
-							   Disabled="@(string.IsNullOrWhiteSpace(_migrationHost) || _testingConnection)"
-							   OnClick="TestMigrationConnectionAsync">
-						연결 테스트
-					</MudButton>
-
-					@if (_connectionTestResult is not null)
-					{
-						<MudText Typo="Typo.body2" Color="@(_connectionTestResult.Value ? Color.Success : Color.Error)">
-							@(_connectionTestResult.Value ? "연결 성공" : $"연결 실패: {_connectionTestError}")
-						</MudText>
-					}
-				</MudStack>
-
-				<MudCheckBox T="bool" @bind-Value="_purgeBeforeMigrate" Color="Color.Warning"
-							  Label="마이그레이션 전 대상 Redis의 IdKeeper/* 전체 삭제(완전 미러링)" />
-
-				<MudButton Variant="Variant.Filled"
-						   Color="Color.Error"
-						   StartIcon="@Icons.Material.Filled.Sync"
-						   Disabled="@(!CanMigrate)"
-						   OnClick="ConfirmAndMigrateAsync">
-					마이그레이션 실행
-				</MudButton>
-
-				@if (_migrating)
-				{
-					<MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-				}
-			</MudStack>
-		</MudPaper>
-
-		<MudPaper Elevation="2" Class="pa-4">
 			<MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2">
 				<MudText Typo="Typo.h6">백업 목록</MudText>
 				<MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="RefreshScheduledBackupsAsync" />
@@ -244,6 +192,58 @@
 					</MudButton>
 				</MudStack>
 			}
+		</MudPaper>
+
+		<MudPaper Elevation="2" Class="pa-4">
+			<MudText Typo="Typo.h6" Class="mb-2">Redis 마이그레이션</MudText>
+			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
+				이 Redis의 "IdKeeper/*" 전체를 다른 Redis로 직접 이관합니다.
+				DUMP/RESTORE(백업 가져오기)는 Redis 버전이 다르면
+				"DUMP payload version or checksum are wrong" 오류로 실패할 수 있어,
+				타입별 네이티브 커맨드(GET/HGETALL/SMEMBERS 등)로 값을 읽고 써서
+				버전에 관계없이 동작합니다.
+			</MudText>
+
+			<MudStack Spacing="2">
+				<MudStack Row="true" Spacing="2">
+					<MudTextField T="string" @bind-Value="_migrationHost" Label="Host" Style="min-width: 260px;" />
+					<MudNumericField T="Int32" @bind-Value="_migrationPort" Label="Port" Style="max-width: 120px;" />
+					<MudTextField T="string" @bind-Value="_migrationPassword" Label="Password"
+								   InputType="InputType.Password" Style="min-width: 200px;" />
+				</MudStack>
+
+				<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+					<MudButton Variant="Variant.Outlined"
+							   Color="Color.Primary"
+							   Disabled="@(string.IsNullOrWhiteSpace(_migrationHost) || _testingConnection)"
+							   OnClick="TestMigrationConnectionAsync">
+						연결 테스트
+					</MudButton>
+
+					@if (_connectionTestResult is not null)
+					{
+						<MudText Typo="Typo.body2" Color="@(_connectionTestResult.Value ? Color.Success : Color.Error)">
+							@(_connectionTestResult.Value ? "연결 성공" : $"연결 실패: {_connectionTestError}")
+						</MudText>
+					}
+				</MudStack>
+
+				<MudCheckBox T="bool" @bind-Value="_purgeBeforeMigrate" Color="Color.Warning"
+							  Label="마이그레이션 전 대상 Redis의 IdKeeper/* 전체 삭제(완전 미러링)" />
+
+				<MudButton Variant="Variant.Filled"
+						   Color="Color.Error"
+						   StartIcon="@Icons.Material.Filled.Sync"
+						   Disabled="@(!CanMigrate)"
+						   OnClick="ConfirmAndMigrateAsync">
+					마이그레이션 실행
+				</MudButton>
+
+				@if (_migrating)
+				{
+					<MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+				}
+			</MudStack>
 		</MudPaper>
 	</MudStack>
 </MudContainer>
