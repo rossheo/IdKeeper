@@ -1,0 +1,41 @@
+.stat-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1.5rem 0;
+}
+
+.stat-item {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	flex: 1 1 200px;
+	padding: 0 1.5rem;
+}
+
+.stat-item:first-child {
+	padding-left: 0;
+}
+
+.stat-item + .stat-item {
+	border-left: 1px solid var(--mud-palette-lines-default);
+}
+
+.usage-meter {
+	background-color: var(--mud-palette-action-disabled-background);
+}
+
+.pattern-list {
+	display: flex;
+	flex-direction: column;
+}
+
+.pattern-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.875rem;
+	padding: 0.875rem 0;
+}
+
+.pattern-row + .pattern-row {
+	border-top: 1px solid var(--mud-palette-lines-default);
+}
