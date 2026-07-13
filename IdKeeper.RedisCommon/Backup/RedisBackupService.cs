@@ -89,6 +89,119 @@ public sealed class RedisBackupService(IConnectionMultiplexer multiplexer)
 		return count;
 	}
 
+	/// <summary>
+	/// 새 Redis로 실제 마이그레이션을 실행하기 전, 접속 가능한지만 확인한다(PING).
+	/// </summary>
+	public static async Task<(bool Success, string? Error)> TestConnectionAsync(
+		string destinationConnectionString, CancellationToken cancellationToken = default)
+	{
+		try
+		{
+			await using ConnectionMultiplexer destination =
+				await ConnectionMultiplexer.ConnectAsync(destinationConnectionString);
+			await destination.GetDatabase().PingAsync();
+			return (true, null);
+		}
+		catch (Exception ex)
+		{
+			return (false, ex.Message);
+		}
+	}
+
+	/// <summary>
+	/// 현재 연결된 Redis의 "IdKeeper/*" 전체를 다른 Redis로 이관한다. DUMP/RESTORE(RDB
+	/// 직렬화)는 서로 다른 Redis 버전 간 호환되지 않을 수 있어(예: Redis 7.4가 도입한
+	/// RDB 버전 12는 7.0 이하가 거부) 타입별 네이티브 커맨드(GET/HGETALL/SMEMBERS/
+	/// ZRANGE/LRANGE → SET/HSET/SADD/ZADD/RPUSH)로 값을 그대로 읽고 쓴다.
+	/// </summary>
+	public async Task<Int32> MigrateAsync(
+		string destinationConnectionString, bool purgeBeforeMigrate, CancellationToken cancellationToken = default)
+	{
+		await using ConnectionMultiplexer destination =
+			await ConnectionMultiplexer.ConnectAsync(destinationConnectionString);
+		IDatabase destinationDb = destination.GetDatabase();
+
+		if (purgeBeforeMigrate)
+		{
+			foreach (EndPoint endpoint in destination.GetEndPoints())
+			{
+				IServer destinationServer = destination.GetServer(endpoint);
+				if (destinationServer.IsReplica)
+				{
+					continue;
+				}
+
+				await foreach (RedisKey key in destinationServer.KeysAsync(
+					pattern: RedisKeyNames.AllKeysPattern, pageSize: ScanPageSize).WithCancellation(cancellationToken))
+				{
+					await destinationDb.KeyDeleteAsync(key);
+				}
+			}
+		}
+
+		IDatabase sourceDb = multiplexer.GetDatabase();
+		Int32 count = 0;
+
+		await foreach (RedisKey key in EnumerateKeysAsync(cancellationToken))
+		{
+			RedisType type = await sourceDb.KeyTypeAsync(key);
+			TimeSpan? ttl = await sourceDb.KeyTimeToLiveAsync(key);
+
+			switch (type)
+			{
+				case RedisType.String:
+					RedisValue str = await sourceDb.StringGetAsync(key);
+					await destinationDb.StringSetAsync(key, str);
+					break;
+
+				case RedisType.Hash:
+					HashEntry[] hash = await sourceDb.HashGetAllAsync(key);
+					if (hash.Length > 0)
+					{
+						await destinationDb.HashSetAsync(key, hash);
+					}
+					break;
+
+				case RedisType.Set:
+					RedisValue[] set = await sourceDb.SetMembersAsync(key);
+					if (set.Length > 0)
+					{
+						await destinationDb.SetAddAsync(key, set);
+					}
+					break;
+
+				case RedisType.SortedSet:
+					SortedSetEntry[] zset = await sourceDb.SortedSetRangeByScoreWithScoresAsync(key);
+					if (zset.Length > 0)
+					{
+						await destinationDb.SortedSetAddAsync(key, zset);
+					}
+					break;
+
+				case RedisType.List:
+					RedisValue[] list = await sourceDb.ListRangeAsync(key, 0, -1);
+					if (list.Length > 0)
+					{
+						await destinationDb.ListRightPushAsync(key, list);
+					}
+					break;
+
+				default:
+					// SCAN과 조회 사이 레이스로 그새 삭제된 키 — 건너뛴다.
+					continue;
+			}
+
+			if (ttl.HasValue)
+			{
+				await destinationDb.KeyExpireAsync(key, ttl.Value);
+			}
+
+			++count;
+		}
+
+		return count;
+	}
+
 	private async Task PurgeAsync(CancellationToken cancellationToken)
 	{
 		IDatabase db = multiplexer.GetDatabase();

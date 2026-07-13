@@ -29,5 +29,6 @@ public static class AuditLogAction
 	public const string RedisBackupImported = "RedisBackupImported";
 	public const string RedisBackupScheduleChanged = "RedisBackupScheduleChanged";
 	public const string RedisBackupFileMetadataChanged = "RedisBackupFileMetadataChanged";
+	public const string RedisMigrated = "RedisMigrated";
 	public const string CredentialSettingsUpdated = "CredentialSettingsUpdated";
 }
