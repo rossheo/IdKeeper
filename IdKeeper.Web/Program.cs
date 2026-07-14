@@ -80,7 +80,7 @@ builder.Services.AddIdentityCore<IdentityUser>(options =>
 	options.Password.RequireUppercase = false;
 	options.Password.RequireDigit = false;
 
-	options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromDays(7);
+	options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(10);
 	options.Lockout.MaxFailedAccessAttempts = 5;
 	options.Lockout.AllowedForNewUsers = true;
 

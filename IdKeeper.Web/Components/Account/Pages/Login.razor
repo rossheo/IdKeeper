@@ -3,11 +3,14 @@
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authentication
 @using Microsoft.AspNetCore.Identity
+@using IdKeeper.Database.Redis.Repositories
 
 @inject SignInManager<IdentityUser> SignInManager
 @inject ILogger<Login> Logger
 @inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
+@inject CredentialSettingsRepository CredentialSettingsRepository
+@inject IHttpClientFactory HttpClientFactory
 
 <PageTitle>Log in</PageTitle>
 
@@ -81,9 +84,7 @@
             return;
         }
 
-        // This doesn't count login failures towards account lockout
-        // To enable password failures to trigger account lockout, set lockoutOnFailure: true
-        SignInResult result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: false);
+        SignInResult result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
 
         if (result.Succeeded)
         {
@@ -93,6 +94,7 @@
         else if (result.IsLockedOut)
         {
             Logger.LogWarning("User account locked out.");
+            await NotifyLockoutAsync(Input.Email);
             RedirectManager.RedirectTo("Account/Lockout");
         }
         else if (result.IsNotAllowed)
@@ -102,6 +104,43 @@
         else
         {
             errorMessage = "Error: Invalid login attempt.";
+        }
+    }
+
+    // 잠긴 당사자에게만 알린다(전체 브로드캐스트가 아님). 웹훅 전송 실패가 로그인
+    // 흐름(Lockout 페이지 리다이렉트)을 막지 않도록 예외를 삼킨다.
+    private async Task NotifyLockoutAsync(string email)
+    {
+        try
+        {
+            IdentityUser? user = await SignInManager.UserManager.FindByEmailAsync(email);
+            if (user is null)
+            {
+                return;
+            }
+
+            string? webhookUrl = await CredentialSettingsRepository.GetDiscordWebhookUrlAsync(user.Id);
+            if (webhookUrl is null)
+            {
+                return;
+            }
+
+            DateTimeOffset? lockoutEnd = await SignInManager.UserManager.GetLockoutEndDateAsync(user);
+            string lockoutEndText = lockoutEnd.HasValue
+                ? $"{lockoutEnd.Value.UtcDateTime:yyyy-MM-dd HH:mm} UTC"
+                : "알 수 없음";
+            string message = $"🔒 로그인 5회 실패로 계정이 잠겼습니다: {email}\n해제 예정 시각: {lockoutEndText}";
+
+            HttpClient client = HttpClientFactory.CreateClient(nameof(Login));
+            HttpResponseMessage response = await client.PostAsJsonAsync(webhookUrl, new { content = message });
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Lockout Discord webhook responded with {StatusCode}.", response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to send a lockout Discord webhook.");
         }
     }
 
