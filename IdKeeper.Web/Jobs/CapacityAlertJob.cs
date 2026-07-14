@@ -44,7 +44,7 @@ public class CapacityAlertJob(
 				return;
 			}
 
-			string message = $"⚠️ IdKeeper Node ID 잔여량이 {remainingPercent:F1}%로 낮습니다. " +
+			string message = $"⚠️ IdKeeper Node ID 여유가 {remainingPercent:F1}%로 낮습니다. " +
 				$"(사용 {used:N0} / 전체 {total:N0})";
 
 			HttpClient client = httpClientFactory.CreateClient(nameof(CapacityAlertJob));

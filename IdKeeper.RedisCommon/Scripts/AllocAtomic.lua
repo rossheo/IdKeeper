@@ -10,7 +10,7 @@
 -- ARGV[7] = entryKeyPrefix ("IdKeeper/AllocatedId/{AllocatedId}/")
 -- ARGV[8] = description (빈 문자열 허용)
 --
--- 에러: ALREADY_EXISTS(동일 requester 이미 존재), INSUFFICIENT_IDS(잔여 ID 부족)
+-- 에러: ALREADY_EXISTS(동일 requester 이미 존재), INSUFFICIENT_IDS(여유 ID 부족)
 --
 -- AuditLog는 {AuditLog} 해시태그가 달라 이 스크립트와 같은 슬롯에 있다는 보장이 없다
 -- (Redis Cluster에서 EVAL은 KEYS가 전부 같은 슬롯이어야 함) — 그래서 감사 로그 기록은
