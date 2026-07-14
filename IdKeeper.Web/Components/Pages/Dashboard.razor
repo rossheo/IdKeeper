@@ -1,7 +1,9 @@
 @page "/"
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 
 @inject AllocatedIdRepository AllocatedIdRepository
+@inject ILogger<Dashboard> Logger
 
 <PageTitle>Dashboard</PageTitle>
 
@@ -41,9 +43,13 @@
 				<MudText Typo="Typo.h6">Node ID 사용 현황</MudText>
 			</CardHeaderContent>
 			<CardHeaderActions>
-				<MudIconButton Icon="@Icons.Material.Filled.Refresh"
-							   OnClick="@RefreshAsync"
-							   Disabled="@(_idStats is null)" />
+				<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+					<MudSwitch T="bool" Value="_autoRefresh" ValueChanged="OnAutoRefreshChanged"
+							   Color="Color.Primary" Label="자동 새로고침 (5초)" />
+					<MudIconButton Icon="@Icons.Material.Filled.Refresh"
+								   OnClick="@RefreshAsync"
+								   Disabled="@(_idStats is null)" />
+				</MudStack>
 			</CardHeaderActions>
 		</MudCardHeader>
 		<MudCardContent>
@@ -141,7 +147,12 @@
 	private string _baseDateTime =>
 		SnowflakeConstant.BaseDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ");
 
+	private static readonly TimeSpan _autoRefreshInterval = TimeSpan.FromSeconds(5);
+
 	private IdStats? _idStats;
+	private bool _autoRefresh = true;
+	private PeriodicTimer? _refreshTimer;
+	private CancellationTokenSource? _refreshCts;
 
 	private record IdStats(Int32 Total, Int32 Used)
 	{
@@ -190,6 +201,71 @@
 		await LoadStatsAsync();
 	}
 
+	protected override void OnAfterRender(bool firstRender)
+	{
+		// 프리렌더 단계에서는 호출되지 않으므로, 실제 서킷에서 타이머가 한 번만 시작된다.
+		if (firstRender && _autoRefresh)
+		{
+			StartAutoRefresh();
+		}
+	}
+
+	private void OnAutoRefreshChanged(bool value)
+	{
+		_autoRefresh = value;
+
+		if (_autoRefresh)
+		{
+			StartAutoRefresh();
+		}
+		else
+		{
+			StopAutoRefresh();
+		}
+	}
+
+	private void StartAutoRefresh()
+	{
+		StopAutoRefresh();
+
+		_refreshCts = new CancellationTokenSource();
+		_refreshTimer = new PeriodicTimer(_autoRefreshInterval);
+		_ = AutoRefreshLoopAsync(_refreshTimer, _refreshCts.Token);
+	}
+
+	private void StopAutoRefresh()
+	{
+		_refreshCts?.Cancel();
+		_refreshCts?.Dispose();
+		_refreshCts = null;
+
+		_refreshTimer?.Dispose();
+		_refreshTimer = null;
+	}
+
+	private async Task AutoRefreshLoopAsync(PeriodicTimer timer, CancellationToken cancellationToken)
+	{
+		try
+		{
+			while (await timer.WaitForNextTickAsync(cancellationToken))
+			{
+				try
+				{
+					await LoadStatsAsync();
+					await InvokeAsync(StateHasChanged);
+				}
+				catch (Exception ex)
+				{
+					// Redis 순단 등 일시적 오류로 자동 새로고침 루프 자체가 죽지 않도록 다음 tick에서 재시도한다.
+					Logger.LogWarning(ex, "Node ID 사용 현황 자동 새로고침 중 오류가 발생했습니다.");
+				}
+			}
+		}
+		catch (OperationCanceledException)
+		{
+		}
+	}
+
 	private async Task RefreshAsync()
 	{
 		await LoadStatsAsync();
@@ -200,5 +276,11 @@
 		Int32 total = 1 << SnowflakeConstant.BitCountOfNodeId;
 		Int64 used = await AllocatedIdRepository.CountOfAllocatedAsync();
 		_idStats = new(total, (Int32)Math.Min(used, total));
+	}
+
+	public ValueTask DisposeAsync()
+	{
+		StopAutoRefresh();
+		return ValueTask.CompletedTask;
 	}
 }
