@@ -10,10 +10,9 @@ using IdKeeper.Common.Constants;
 using IdKeeper.Common.Exceptions;
 using IdKeeper.Common.Extensions;
 using IdKeeper.Database.Redis.Extensions;
+using IdKeeper.Database.Redis.Repositories;
 using Microsoft.AspNetCore.HttpOverrides;
 using TickerQ.DependencyInjection;
-
-SnowflakeConstant.EnsureValid();
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -53,6 +52,8 @@ builder.Services.AddScoped<XApiKeyFilter>();
 
 builder.Services.AddSingleton<CidrCache>();
 builder.Services.AddHostedService<CidrCacheRefreshService>();
+
+builder.Services.AddSingleton<SnowflakeLayoutHolder>();
 
 builder.Services.AddTickerQ();
 
@@ -94,6 +95,18 @@ if (builder.Environment.IsDevelopment())
 WebApplication app = builder.Build();
 VersionConstant.Logging(app.Logger);
 MachineConstant.Logging(app.Logger);
+
+// SnowflakeLayoutHolder는 Redis 접근이 필요해 SnowflakeConstant.EnsureValid()의 정적 호출을
+// 여기(app.Build() 이후, DI 준비 시점)로 대체한다. 값은 프로세스 생명주기 동안 고정 —
+// 변경 후 반영하려면 재시작이 필요하다(/snowflakelayout 페이지 경고 참고).
+await using (AsyncServiceScope snowflakeLayoutScope = app.Services.CreateAsyncScope())
+{
+	SnowflakeLayoutRepository snowflakeLayoutRepository =
+		snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutRepository>();
+	SnowflakeLayout snowflakeLayout = await snowflakeLayoutRepository.GetAsync();
+	snowflakeLayout.EnsureValid();
+	snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutHolder>().Initialize(snowflakeLayout);
+}
 
 app.UseForwardedHeaders();
 app.UseTickerQ();

@@ -16,7 +16,8 @@ namespace IdKeeper.ApiService.Controllers;
 public class IdKeeperControllerAlloc(
 	ILogger<IdKeeperControllerAlloc> logger,
 	AllocatedIdRepository allocatedIdRepository,
-	IdKeeperSetting setting) : ControllerBase
+	IdKeeperSetting setting,
+	SnowflakeLayoutHolder snowflakeLayoutHolder) : ControllerBase
 {
 	[HttpPost("Alloc")]
 	[ServiceFilter<XApiKeyFilter>]
@@ -25,7 +26,8 @@ public class IdKeeperControllerAlloc(
 		[FromBody] IdKeeperRequestV1Alloc request,
 		CancellationToken cancellationToken = default)
 	{
-		const Int32 maxNodeIdInclusive = SnowflakeConstant.MaxNodeIdInclusive;
+		SnowflakeLayout layout = snowflakeLayoutHolder.Current;
+		Int32 maxNodeIdInclusive = layout.MaxNodeIdInclusive;
 
 		string actor = HttpContext.Items[XApiKeyConstant.XApiKeyOwnerItemKey] as string ?? request.Requester;
 		string? remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -51,11 +53,11 @@ public class IdKeeperControllerAlloc(
 			case AllocResult.Success success:
 				IdKeeperResponseV1Alloc response = new()
 				{
-					BaseDateTime = new DateTimeOffset(SnowflakeConstant.BaseDateTime, TimeSpan.Zero),
+					BaseDateTime = new DateTimeOffset(layout.BaseDateTime, TimeSpan.Zero),
 					BitCount = new IdKeeperResponseV1Alloc.BitCountRecord(
-						SnowflakeConstant.BitCountOfTimestamp,
-						SnowflakeConstant.BitCountOfNodeId,
-						SnowflakeConstant.BitCountOfSequenceId),
+						layout.BitCountOfTimestamp,
+						layout.BitCountOfNodeId,
+						layout.BitCountOfSequenceId),
 					Ids = [.. success.Ids.Select(id =>
 						new IdRecord(id, new DateTimeOffset(success.ExpiredAtUtc, TimeSpan.Zero)))]
 				};

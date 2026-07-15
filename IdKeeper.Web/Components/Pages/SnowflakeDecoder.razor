@@ -4,6 +4,7 @@
 
 @using IdKeeper.Common.Constants
 @inject AllocatedIdRepository AllocatedIdRepository
+@inject SnowflakeLayoutHolder SnowflakeLayoutHolder
 
 <PageTitle>Snowflake Decoder</PageTitle>
 
@@ -71,11 +72,11 @@
 						<MudPaper Outlined="true" Class="pa-4">
 							<MudStack Spacing="1">
 								<MudText Typo="Typo.caption" Color="Color.Secondary">
-									Timestamp (@SnowflakeConstant.BitCountOfTimestamp bits)
+									Timestamp (@SnowflakeLayoutHolder.Current.BitCountOfTimestamp bits)
 								</MudText>
 								<MudText Typo="Typo.body1">@_result.TimestampMs ms</MudText>
 								<MudText Typo="Typo.caption" Color="Color.Tertiary">
-									Epoch: @SnowflakeConstant.BaseDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC
+									Epoch: @SnowflakeLayoutHolder.Current.BaseDateTime.ToString("yyyy-MM-dd HH:mm:ss") UTC
 								</MudText>
 							</MudStack>
 						</MudPaper>
@@ -85,7 +86,7 @@
 						<MudPaper Outlined="true" Class="pa-4">
 							<MudStack Spacing="1">
 								<MudText Typo="Typo.caption" Color="Color.Secondary">
-									Node ID (@SnowflakeConstant.BitCountOfNodeId bits)
+									Node ID (@SnowflakeLayoutHolder.Current.BitCountOfNodeId bits)
 								</MudText>
 								<MudText Typo="Typo.h5" Color="Color.Primary">@_result.NodeId</MudText>
 							</MudStack>
@@ -96,7 +97,7 @@
 						<MudPaper Outlined="true" Class="pa-4">
 							<MudStack Spacing="1">
 								<MudText Typo="Typo.caption" Color="Color.Secondary">
-									Sequence ID (@SnowflakeConstant.BitCountOfSequenceId bits)
+									Sequence ID (@SnowflakeLayoutHolder.Current.BitCountOfSequenceId bits)
 								</MudText>
 								<MudText Typo="Typo.h5">@_result.SequenceId</MudText>
 							</MudStack>
@@ -139,23 +140,23 @@
 				<MudStack Row="true" Spacing="0" Style="font-family: monospace; font-size: 0.75rem; overflow-x: auto;">
 					<MudTooltip Text="@($"Timestamp: {_result.TimestampMs}ms")">
 						<MudPaper Outlined="true" Class="pa-2 mr-1"
-								  Style="@($"background: var(--mud-palette-success-lighten); flex: {SnowflakeConstant.BitCountOfTimestamp}; text-align: center; min-width: 80px;")">
+								  Style="@($"background: var(--mud-palette-success-lighten); flex: {SnowflakeLayoutHolder.Current.BitCountOfTimestamp}; text-align: center; min-width: 80px;")">
 							<MudText Typo="Typo.caption">Timestamp</MudText>
-							<MudText Typo="Typo.caption">@SnowflakeConstant.BitCountOfTimestamp bits</MudText>
+							<MudText Typo="Typo.caption">@SnowflakeLayoutHolder.Current.BitCountOfTimestamp bits</MudText>
 						</MudPaper>
 					</MudTooltip>
 					<MudTooltip Text="@($"Node ID: {_result.NodeId}")">
 						<MudPaper Outlined="true" Class="pa-2 mr-1"
-								  Style="@($"background: var(--mud-palette-info-lighten); flex: {SnowflakeConstant.BitCountOfNodeId}; text-align: center; min-width: 60px;")">
+								  Style="@($"background: var(--mud-palette-info-lighten); flex: {SnowflakeLayoutHolder.Current.BitCountOfNodeId}; text-align: center; min-width: 60px;")">
 							<MudText Typo="Typo.caption">Node ID</MudText>
-							<MudText Typo="Typo.caption">@SnowflakeConstant.BitCountOfNodeId bits</MudText>
+							<MudText Typo="Typo.caption">@SnowflakeLayoutHolder.Current.BitCountOfNodeId bits</MudText>
 						</MudPaper>
 					</MudTooltip>
 					<MudTooltip Text="@($"Sequence: {_result.SequenceId}")">
 						<MudPaper Outlined="true" Class="pa-2"
-								  Style="@($"background: var(--mud-palette-warning-lighten); flex: {SnowflakeConstant.BitCountOfSequenceId}; text-align: center; min-width: 60px;")">
+								  Style="@($"background: var(--mud-palette-warning-lighten); flex: {SnowflakeLayoutHolder.Current.BitCountOfSequenceId}; text-align: center; min-width: 60px;")">
 							<MudText Typo="Typo.caption">Sequence</MudText>
-							<MudText Typo="Typo.caption">@SnowflakeConstant.BitCountOfSequenceId bits</MudText>
+							<MudText Typo="Typo.caption">@SnowflakeLayoutHolder.Current.BitCountOfSequenceId bits</MudText>
 						</MudPaper>
 					</MudTooltip>
 				</MudStack>
@@ -196,8 +197,8 @@
 			return;
 		}
 
-		Int32 sequenceBits = SnowflakeConstant.BitCountOfSequenceId;
-		Int32 nodeBits = SnowflakeConstant.BitCountOfNodeId;
+		Int32 sequenceBits = SnowflakeLayoutHolder.Current.BitCountOfSequenceId;
+		Int32 nodeBits = SnowflakeLayoutHolder.Current.BitCountOfNodeId;
 
 		Int64 sequenceMask = (1L << sequenceBits) - 1;
 		Int64 nodeMask = (1L << nodeBits) - 1;
@@ -206,7 +207,7 @@
 		Int32 nodeId = (Int32)((snowflakeId >> sequenceBits) & nodeMask);
 		Int64 timestampMs = snowflakeId >> (sequenceBits + nodeBits);
 
-		DateTime baseDateTimeUtc = SnowflakeConstant.BaseDateTime;
+		DateTime baseDateTimeUtc = SnowflakeLayoutHolder.Current.BaseDateTime;
 		DateTime generatedAtUtc = baseDateTimeUtc.AddMilliseconds(timestampMs);
 
 		AllocatedId? allocatedId = await AllocatedIdRepository.GetAsync(nodeId);

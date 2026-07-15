@@ -1,0 +1,267 @@
+@page "/snowflakelayout"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = Role.Administrator)]
+
+@inject SnowflakeLayoutRepository SnowflakeLayoutRepository
+@inject SnowflakeLayoutHolder SnowflakeLayoutHolder
+@inject AllocatedIdRepository AllocatedIdRepository
+@inject FeatureSwitchRepository FeatureSwitchRepository
+@inject CredentialSettingsRepository CredentialSettingsRepository
+@inject AuditLogRepository AuditLogRepository
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ILogger<SnowflakeLayoutSettings> Logger
+
+<PageTitle>Snowflake Layout</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Medium" Class="my-8">
+	<MudItem>
+		<MudText Typo="Typo.h4" Class="mb-2">Snowflake Layout</MudText>
+	</MudItem>
+
+	<MudPaper Elevation="2" Class="pa-4 mt-4">
+		<MudText Typo="Typo.h6" Class="mb-2">현재 이 프로세스가 사용 중인 값</MudText>
+		<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
+			Timestamp @SnowflakeLayoutHolder.Current.BitCountOfTimestamp bit ·
+			NodeId @SnowflakeLayoutHolder.Current.BitCountOfNodeId bit ·
+			Sequence @SnowflakeLayoutHolder.Current.BitCountOfSequenceId bit ·
+			기준 연도 @SnowflakeLayoutHolder.Current.BaseDateTimeStartYear ·
+			@FormatWraparound(SnowflakeLayoutHolder.Current.WraparoundDateUtc)
+			(저장된 값과 다르면 이 프로세스가 아직 재시작 전이라는 뜻입니다.)
+		</MudText>
+
+		<MudAlert Severity="Severity.Warning" Class="mb-4" Dense="true">
+			저장해도 지금 떠 있는 프로세스에는 즉시 반영되지 않습니다.
+			반영하려면 <b>IdKeeper.ApiService, IdKeeper.Web, 그리고 이 값을 사용하는 모든
+			SnowflakeApiService 생성기 프로세스를 전부 재시작</b>해야 합니다 — 일부만 재시작하면
+			서로 다른 레이아웃의 생성기가 동시에 떠 있게 되어 ID 충돌 위험이 생깁니다.<br />
+			NodeId 비트 수를 줄이면 이미 할당된 NodeId 중 일부가 새 상한을 벗어날 수 있습니다.<br />
+			과거에 발급된 Snowflake ID는 저장 당시의 레이아웃/기준 연도로 인코딩되어 있어, 값을
+			바꾸면 Snowflake Decoder가 과거 ID를 조용히 잘못 해석하게 됩니다.
+		</MudAlert>
+
+		@if (!_editAllowed)
+		{
+			<MudAlert Severity="Severity.Info" Class="mb-4" Dense="true">
+				편집하려면 FeatureSwitch <code>@FeatureSwitchKey.SnowflakeLayoutEdit</code>을 켜야 합니다.
+				<MudLink Href="/featureswitch" Class="ml-1">FeatureSwitch 관리로 이동</MudLink>
+			</MudAlert>
+		}
+
+		@if (_allocatedCount > 0)
+		{
+			<MudAlert Severity="Severity.Warning" Class="mb-4" Dense="true">
+				현재 @_allocatedCount 개의 NodeId가 할당되어 있습니다. NodeId 비트 수를 줄이면
+				일부가 새 범위를 벗어날 수 있습니다.
+			</MudAlert>
+		}
+
+		<MudStack Spacing="3">
+			<MudStack Row="true" Spacing="4" Wrap="Wrap.Wrap">
+				<MudNumericField T="Int32" @bind-Value="_bitCountOfTimestamp" Label="Timestamp 비트"
+								  Disabled="@(!_editAllowed)" Immediate="true"
+								  Min="@SnowflakeLayout.MinTimestampBitCount" Max="61" Style="max-width:160px;" />
+				<MudNumericField T="Int32" @bind-Value="_bitCountOfNodeId" Label="NodeId 비트"
+								  Disabled="@(!_editAllowed)" Immediate="true"
+								  Min="1" Max="61" Style="max-width:160px;" />
+				<MudNumericField T="Int32" @bind-Value="_bitCountOfSequenceId" Label="Sequence 비트"
+								  Disabled="@(!_editAllowed)" Immediate="true"
+								  Min="1" Max="61" Style="max-width:160px;" />
+				<MudNumericField T="Int32" @bind-Value="_baseDateTimeStartYear" Label="기준 연도"
+								  Disabled="@(!_editAllowed)" Immediate="true"
+								  Min="2000" Max="@DateTime.UtcNow.Year" Style="max-width:160px;" />
+			</MudStack>
+
+			<MudText Typo="Typo.body2" Color="@(_bitSum == 63 ? Color.Success : Color.Error)">
+				비트 합계: @_bitSum / 63 @(_bitSum == 63 ? "✓" : "— 합계가 63이어야 저장할 수 있습니다.")
+			</MudText>
+
+			@if (!_timestampBitsValid)
+			{
+				<MudText Typo="Typo.body2" Color="Color.Error">
+					Timestamp 비트는 최소 @SnowflakeLayout.MinTimestampBitCount 이상이어야 합니다
+					(wrap-around 전 최소 유효 기간 확보).
+				</MudText>
+			}
+
+			<MudText Typo="Typo.body2" Color="Color.Warning">
+				이 입력값으로 저장하면 @PreviewWraparoundText
+			</MudText>
+
+			<MudButton Variant="Variant.Filled"
+					   Color="Color.Error"
+					   Disabled="@(!_editAllowed || _bitSum != 63 || !_timestampBitsValid || _saving)"
+					   OnClick="ConfirmAndSaveAsync">
+				저장
+			</MudButton>
+
+			@if (_saving)
+			{
+				<MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+			}
+		</MudStack>
+	</MudPaper>
+</MudContainer>
+
+@code {
+	private bool _editAllowed;
+	private Int64 _allocatedCount;
+	private string _actor = string.Empty;
+	private bool _saving;
+
+	private Int32 _bitCountOfTimestamp;
+	private Int32 _bitCountOfNodeId;
+	private Int32 _bitCountOfSequenceId;
+	private Int32 _baseDateTimeStartYear;
+
+	private Int32 _bitSum => _bitCountOfTimestamp + _bitCountOfNodeId + _bitCountOfSequenceId;
+	private bool _timestampBitsValid => _bitCountOfTimestamp >= SnowflakeLayout.MinTimestampBitCount;
+
+	// Immediate 입력 도중 연도/비트 값이 일시적으로 범위를 벗어날 수 있어(예: 필드를 비우는 중)
+	// SnowflakeLayout.BaseDateTime/WraparoundDateUtc가 던질 수 있는 ArgumentOutOfRangeException을
+	// 미리보기에서는 페이지 렌더를 깨뜨리지 않도록 흡수한다. 저장 시점 검증(EnsureValid)과는 별개.
+	private string PreviewWraparoundText
+	{
+		get
+		{
+			try
+			{
+				SnowflakeLayout preview = new()
+				{
+					BitCountOfTimestamp = _bitCountOfTimestamp,
+					BitCountOfNodeId = _bitCountOfNodeId,
+					BitCountOfSequenceId = _bitCountOfSequenceId,
+					BaseDateTimeStartYear = _baseDateTimeStartYear,
+				};
+				return FormatWraparound(preview.WraparoundDateUtc);
+			}
+			catch (ArgumentOutOfRangeException)
+			{
+				return "입력값이 아직 유효하지 않습니다.";
+			}
+		}
+	}
+
+	private static string FormatWraparound(DateTime? wraparoundDateUtc) => wraparoundDateUtc is DateTime dt
+		? $"{dt:yyyy-MM-dd}까지 유효합니다. 그 이후에는 타임스탬프가 wrap-around되어 ID가 과거 ID와 겹치거나 정렬이 깨질 수 있습니다."
+		: "유효 기간이 사실상 무제한입니다.";
+
+	protected override async Task OnInitializedAsync()
+	{
+		AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+		_actor = authState.User.Identity?.Name ?? "unknown";
+
+		_editAllowed = await FeatureSwitchRepository.IsEnabledAsync(FeatureSwitchKey.SnowflakeLayoutEdit);
+		_allocatedCount = await AllocatedIdRepository.CountOfAllocatedAsync();
+
+		SnowflakeLayout layout = await SnowflakeLayoutRepository.GetAsync();
+		_bitCountOfTimestamp = layout.BitCountOfTimestamp;
+		_bitCountOfNodeId = layout.BitCountOfNodeId;
+		_bitCountOfSequenceId = layout.BitCountOfSequenceId;
+		_baseDateTimeStartYear = layout.BaseDateTimeStartYear;
+	}
+
+	private async Task ConfirmAndSaveAsync()
+	{
+		if (!_editAllowed || _saving || _bitSum != 63 || !_timestampBitsValid)
+		{
+			return;
+		}
+
+		SnowflakeLayout current = await SnowflakeLayoutRepository.GetAsync();
+		SnowflakeLayout next = new()
+		{
+			BitCountOfTimestamp = _bitCountOfTimestamp,
+			BitCountOfNodeId = _bitCountOfNodeId,
+			BitCountOfSequenceId = _bitCountOfSequenceId,
+			BaseDateTimeStartYear = _baseDateTimeStartYear,
+		};
+
+		string message =
+			$"Timestamp {current.BitCountOfTimestamp}→{next.BitCountOfTimestamp}bit, " +
+			$"NodeId {current.BitCountOfNodeId}→{next.BitCountOfNodeId}bit, " +
+			$"Sequence {current.BitCountOfSequenceId}→{next.BitCountOfSequenceId}bit, " +
+			$"기준연도 {current.BaseDateTimeStartYear}→{next.BaseDateTimeStartYear}로 저장합니다. " +
+			"반영하려면 관련 프로세스를 모두 재시작해야 합니다. 계속할까요?";
+
+		bool? confirmed = await DialogService.ShowMessageBoxAsync(
+			"Snowflake Layout 변경 확인", message, yesText: "저장", cancelText: "취소");
+
+		if (confirmed != true)
+		{
+			return;
+		}
+
+		_saving = true;
+		StateHasChanged();
+
+		try
+		{
+			// 비활성화된 필드를 우회해 호출되는 경우를 대비한 서버 측 재검증.
+			if (!await FeatureSwitchRepository.IsEnabledAsync(FeatureSwitchKey.SnowflakeLayoutEdit))
+			{
+				Snackbar.Add("FeatureSwitch가 꺼져 있어 저장할 수 없습니다.", Severity.Error);
+				return;
+			}
+
+			await SnowflakeLayoutRepository.SetAsync(next);
+
+			await AuditLogRepository.AppendAsync(
+				AuditLogAction.SnowflakeLayoutChanged, _actor,
+				detail: $"Timestamp={next.BitCountOfTimestamp}, NodeId={next.BitCountOfNodeId}, " +
+					$"Sequence={next.BitCountOfSequenceId}, BaseDateTimeStartYear={next.BaseDateTimeStartYear}");
+
+			await SendDiscordNotificationAsync(current, next);
+
+			Snackbar.Add(
+				"저장했습니다. 반영하려면 ApiService/Web/SnowflakeApiService 프로세스를 재시작하세요.",
+				Severity.Success);
+
+			_allocatedCount = await AllocatedIdRepository.CountOfAllocatedAsync();
+		}
+		catch (Exception ex)
+		{
+			Snackbar.Add($"저장 실패: {ex.Message}", Severity.Error);
+		}
+		finally
+		{
+			_saving = false;
+			StateHasChanged();
+		}
+	}
+
+	private async Task SendDiscordNotificationAsync(SnowflakeLayout previous, SnowflakeLayout next)
+	{
+		List<string> webhookUrls = await CredentialSettingsRepository.GetAllDiscordWebhookUrlsAsync();
+		if (webhookUrls.Count == 0)
+		{
+			return;
+		}
+
+		string message = "⚠️ IdKeeper Snowflake 레이아웃이 변경되었습니다. " +
+			$"Timestamp={previous.BitCountOfTimestamp}→{next.BitCountOfTimestamp}, " +
+			$"NodeId={previous.BitCountOfNodeId}→{next.BitCountOfNodeId}, " +
+			$"Sequence={previous.BitCountOfSequenceId}→{next.BitCountOfSequenceId}, " +
+			$"기준연도={previous.BaseDateTimeStartYear}→{next.BaseDateTimeStartYear}. " +
+			"반영하려면 관련 프로세스를 재시작하세요.";
+
+		HttpClient client = HttpClientFactory.CreateClient(nameof(SnowflakeLayoutSettings));
+		foreach (string webhookUrl in webhookUrls)
+		{
+			try
+			{
+				HttpResponseMessage response = await client.PostAsJsonAsync(webhookUrl, new { content = message });
+				if (!response.IsSuccessStatusCode)
+				{
+					Logger.LogWarning("SnowflakeLayoutChanged Discord webhook responded with {StatusCode}.",
+						response.StatusCode);
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.LogError(ex, "Failed to send a SnowflakeLayoutChanged Discord webhook.");
+			}
+		}
+	}
+}

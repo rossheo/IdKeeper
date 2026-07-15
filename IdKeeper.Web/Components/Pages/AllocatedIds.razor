@@ -3,6 +3,7 @@
 @attribute [Authorize(Roles = $"{Role.Administrator},{Role.Maintainer}")]
 
 @inject AllocatedIdRepository AllocatedIdRepository
+@inject SnowflakeLayoutHolder SnowflakeLayoutHolder
 @inject ISnackbar Snackbar
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject AuditLogRepository AuditLogRepository
@@ -137,7 +138,7 @@
 
 		try
 		{
-			Int32 maxNodeIdInclusive = (1 << SnowflakeConstant.BitCountOfNodeId) - 1;
+			Int32 maxNodeIdInclusive = SnowflakeLayoutHolder.Current.MaxNodeIdInclusive;
 			_items = [.. (await AllocatedIdRepository.GetAllAsync(maxNodeIdInclusive)).OrderBy(r => r.Id)];
 		}
 		finally

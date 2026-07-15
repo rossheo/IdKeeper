@@ -85,7 +85,10 @@ public sealed class RedisSeedHostedService(
 		{
 			if (!await featureSwitchRepository.ExistsAsync(key, stoppingToken))
 			{
-				await featureSwitchRepository.CreateAsync(key, isEnabled: true, description: null, stoppingToken);
+				// SnowflakeLayoutEdit은 "위험 설정 편집 허용" 게이트라 다른 스위치와 달리
+				// 기본 OFF로 시딩한다 — 관리자가 명시적으로 켜야만 레이아웃을 편집할 수 있다.
+				bool isEnabled = key != FeatureSwitchKey.SnowflakeLayoutEdit;
+				await featureSwitchRepository.CreateAsync(key, isEnabled, description: null, stoppingToken);
 			}
 		}
 	}

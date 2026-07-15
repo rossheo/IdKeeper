@@ -9,6 +9,7 @@ public class CapacityAlertJob(
 	ILogger<CapacityAlertJob> logger,
 	AllocatedIdRepository allocatedIdRepository,
 	CredentialSettingsRepository credentialSettingsRepository,
+	SnowflakeLayoutHolder snowflakeLayoutHolder,
 	IHttpClientFactory httpClientFactory)
 {
 	public static class FunctionNames
@@ -25,7 +26,7 @@ public class CapacityAlertJob(
 	{
 		try
 		{
-			Int32 total = 1 << SnowflakeConstant.BitCountOfNodeId;
+			Int32 total = snowflakeLayoutHolder.Current.MaxNodeIdInclusive + 1;
 			Int64 used = await allocatedIdRepository.CountOfAllocatedAsync(cancellationToken);
 			double remainingPercent = total == 0 ? 0 : (1.0 - (double)used / total) * 100.0;
 

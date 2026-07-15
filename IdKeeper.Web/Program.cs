@@ -20,8 +20,6 @@ using MudBlazor.Services;
 using StackExchange.Redis;
 using TickerQ.DependencyInjection;
 
-SnowflakeConstant.EnsureValid();
-
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
@@ -38,6 +36,10 @@ builder.Services.AddHttpClient(nameof(CapacityAlertJob));
 builder.Services.AddSingleton<CapacityAlertJob>();
 builder.Services.AddHttpClient(nameof(XApiKeyExpiryAlertJob));
 builder.Services.AddSingleton<XApiKeyExpiryAlertJob>();
+// SnowflakeLayoutSettings.razor의 Discord 알림 전송용 (Program.cs에서 razor 컴포넌트 타입을
+// 직접 참조하지 않도록 리터럴 이름을 쓰고, 페이지 쪽은 nameof(SnowflakeLayoutSettings)로 동일한
+// 이름을 참조한다).
+builder.Services.AddHttpClient("SnowflakeLayoutSettings");
 builder.Services.AddTickerQ();
 
 // Data Protection 키를 Redis에 영속화 (컨테이너 재시작 시 키 유실 방지).
@@ -98,9 +100,23 @@ builder.Services.AddSingleton<IEmailSender<IdentityUser>, IdentityNoOpEmailSende
 
 builder.Services.AddHostedService<RedisSeedHostedService>();
 
+builder.Services.AddSingleton<SnowflakeLayoutHolder>();
+
 WebApplication app = builder.Build();
 VersionConstant.Logging(app.Logger);
 MachineConstant.Logging(app.Logger);
+
+// SnowflakeLayoutHolder는 Redis 접근이 필요해 SnowflakeConstant.EnsureValid()의 정적 호출을
+// 여기(app.Build() 이후, DI 준비 시점)로 대체한다. 값은 프로세스 생명주기 동안 고정 —
+// 변경 후 반영하려면 재시작이 필요하다(/snowflakelayout 페이지 경고 참고).
+await using (AsyncServiceScope snowflakeLayoutScope = app.Services.CreateAsyncScope())
+{
+	SnowflakeLayoutRepository snowflakeLayoutRepository =
+		snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutRepository>();
+	SnowflakeLayout snowflakeLayout = await snowflakeLayoutRepository.GetAsync();
+	snowflakeLayout.EnsureValid();
+	snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutHolder>().Initialize(snowflakeLayout);
+}
 
 if (!app.Environment.IsDevelopment())
 {

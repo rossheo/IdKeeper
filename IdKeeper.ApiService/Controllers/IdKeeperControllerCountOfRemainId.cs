@@ -11,7 +11,9 @@ namespace IdKeeper.ApiService.Controllers;
 [ApiVersion(1)]
 [Route("v{version:apiVersion}/IdKeeper")]
 [Tags("IdKeeper")]
-public class IdKeeperControllerCountOfRemainId(AllocatedIdRepository allocatedIdRepository) : ControllerBase
+public class IdKeeperControllerCountOfRemainId(
+	AllocatedIdRepository allocatedIdRepository,
+	SnowflakeLayoutHolder snowflakeLayoutHolder) : ControllerBase
 {
 	[HttpGet("CountOfRemainId")]
 	[ServiceFilter<XApiKeyFilter>]
@@ -19,7 +21,7 @@ public class IdKeeperControllerCountOfRemainId(AllocatedIdRepository allocatedId
 	public async Task<ActionResult<IdKeeperResponseV1CountOfRemainId>> CountOfRemainIdV1Async(
 		CancellationToken cancellationToken = default)
 	{
-		const Int64 totalIds = (Int64)SnowflakeConstant.MaxNodeIdInclusive + 1;
+		Int64 totalIds = (Int64)snowflakeLayoutHolder.Current.MaxNodeIdInclusive + 1;
 
 		Int64 allocatedCount = await allocatedIdRepository.CountOfAllocatedAsync(cancellationToken);
 		Int64 remainNodeIdCount = Math.Max(0L, totalIds - allocatedCount);

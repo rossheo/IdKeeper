@@ -100,6 +100,11 @@ public static class RedisKeyNames
 		public static string Settings => "IdKeeper/RedisBackupSchedule/Settings";
 	}
 
+	public static class SnowflakeLayout
+	{
+		public static string Settings => "IdKeeper/SnowflakeLayout/Settings";
+	}
+
 	public static class CredentialSettings
 	{
 		private const string Tag = "{CredentialSettings}";
