@@ -105,6 +105,17 @@ public static class RedisKeyNames
 		public static string Settings => "IdKeeper/SnowflakeLayout/Settings";
 	}
 
+	public static class SnowflakeWraparoundAlert
+	{
+		private const string Tag = "{SnowflakeWraparoundAlert}";
+
+		// wraparoundTicks를 키에 포함해, 레이아웃이 바뀌어 wrap-around 시점 자체가 달라지면
+		// 예전 시점 기준으로 이미 보낸 마일스톤 기록은 자연히 무의미해지고(새 조합이라 미존재
+		// 취급) 다시 보낼 수 있다 — 별도 초기화/삭제 로직이 필요 없다.
+		public static string Sent(Int64 wraparoundTicks, string milestone) =>
+			$"IdKeeper/SnowflakeWraparoundAlert/{Tag}/{wraparoundTicks}/{milestone}";
+	}
+
 	public static class CredentialSettings
 	{
 		private const string Tag = "{CredentialSettings}";

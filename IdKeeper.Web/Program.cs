@@ -36,6 +36,8 @@ builder.Services.AddHttpClient(nameof(CapacityAlertJob));
 builder.Services.AddSingleton<CapacityAlertJob>();
 builder.Services.AddHttpClient(nameof(XApiKeyExpiryAlertJob));
 builder.Services.AddSingleton<XApiKeyExpiryAlertJob>();
+builder.Services.AddHttpClient(nameof(SnowflakeWraparoundAlertJob));
+builder.Services.AddSingleton<SnowflakeWraparoundAlertJob>();
 // SnowflakeLayoutSettings.razor의 Discord 알림 전송용 (Program.cs에서 razor 컴포넌트 타입을
 // 직접 참조하지 않도록 리터럴 이름을 쓰고, 페이지 쪽은 nameof(SnowflakeLayoutSettings)로 동일한
 // 이름을 참조한다).

@@ -26,6 +26,7 @@ public static class RedisExtensions
 		builder.Services.AddSingleton<AuditLogRepository>();
 		builder.Services.AddSingleton<RedisBackupScheduleRepository>();
 		builder.Services.AddSingleton<SnowflakeLayoutRepository>();
+		builder.Services.AddSingleton<SnowflakeWraparoundAlertRepository>();
 
 		builder.Services.AddSingleton<IdentityUserStore>();
 		builder.Services.AddSingleton<IdentityRoleStore>();
