@@ -31,5 +31,6 @@ public static class AuditLogAction
 	public const string RedisBackupFileMetadataChanged = "RedisBackupFileMetadataChanged";
 	public const string RedisMigrated = "RedisMigrated";
 	public const string CredentialSettingsUpdated = "CredentialSettingsUpdated";
+	public const string CredentialSettingsRemoved = "CredentialSettingsRemoved";
 	public const string SnowflakeLayoutChanged = "SnowflakeLayoutChanged";
 }

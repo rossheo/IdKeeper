@@ -50,6 +50,25 @@ public sealed class CredentialSettingsRepository(
 		return true;
 	}
 
+	/// <summary>
+	/// Discord 웹훅 설정을 제거한다("빈칸 저장 = 기존 값 유지" UX라 SetDiscordWebhookAsync로는 지울 수
+	/// 없어 별도 메서드로 분리). 이 해시에는 향후 다른 Credential 필드가 추가될 수 있어 Entry 키 전체가
+	/// 아니라 Discord 관련 필드만 지운다. 이미 제거된 상태면 false를 반환한다.
+	/// </summary>
+	public async Task<bool> RemoveDiscordWebhookAsync(string userId, CancellationToken cancellationToken = default)
+	{
+		RedisKey entryKey = RedisKeyNames.CredentialSettings.Entry(userId);
+		RedisValue existing = await Db.HashGetAsync(entryKey, "DiscordWebhookUrlProtected");
+		if (existing.IsNullOrEmpty)
+		{
+			return false;
+		}
+
+		await Db.HashDeleteAsync(entryKey, ["DiscordWebhookUrlProtected", "LastSavedAtUtc"]);
+		await Db.SetRemoveAsync(RedisKeyNames.CredentialSettings.DiscordConfiguredUserIds, userId);
+		return true;
+	}
+
 	/// <summary>실제 웹훅 전송 시에만 사용한다. UI에는 절대 복호화 값을 노출하지 않는다.</summary>
 	public async Task<string?> GetDiscordWebhookUrlAsync(string userId, CancellationToken cancellationToken = default)
 	{
