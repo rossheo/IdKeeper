@@ -45,11 +45,17 @@ jobs:
       - name: Publish ${{ matrix.service }} image
         run: |
           set -e
-          SHORT_SHA=$(git rev-parse --short HEAD)
+          # Directory.Build.targets의 FullVersion(Major.YYMM.이번달커밋수)과 동일한 규칙으로
+          # 버전 태그를 계산한다 — 두 곳의 계산식이 어긋나면 어셈블리 버전과 이미지 태그가
+          # 서로 다른 값을 가리키게 되므로 반드시 동기화 상태를 유지해야 한다.
+          MAJOR=$(grep -o '"major"[[:space:]]*:[[:space:]]*[0-9]\+' version.json | grep -o '[0-9]\+$')
+          YYMM=$(date -u +"%y%m")
+          COMMIT_COUNT=$(git rev-list --count --since="$(date -u +%Y-%m)-01T00:00:00Z" HEAD)
+          VERSION="$MAJOR.$YYMM.$COMMIT_COUNT"
           # 태그마다 별도로 publish한다 — ContainerImageTag(단수)만 신뢰할 수 있게 동작하는 것을
           # 확인했고(복수형 ContainerImageTags는 CLI에서 세미콜론 구분자 처리가 불안정했다),
-          # latest는 최신 배포를 가리키고 sha-<short> 태그는 특정 커밋으로 롤백할 수 있게 한다.
-          for TAG in latest "sha-$SHORT_SHA"; do
+          # latest는 최신 배포를 가리키고 버전 태그는 특정 빌드로 롤백할 수 있게 한다.
+          for TAG in latest "$VERSION"; do
             dotnet publish "${{ matrix.project }}" \
               -c Release --os linux --arch x64 \
               -t:PublishContainer \

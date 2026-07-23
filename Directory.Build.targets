@@ -5,13 +5,11 @@
 	     기본값(1.0.0)이 스탬프되는 문제가 있었다. -->
 	<Target Name="GitInformation" BeforeTargets="GetAssemblyVersion;CoreGenerateAssemblyInfo">
 		<PropertyGroup>
-			<!-- version.json에서 Major, Minor 읽기 -->
+			<!-- version.json에서 Major 읽기 -->
 			<VersionJsonPath>$(MSBuildThisFileDirectory)version.json</VersionJsonPath>
 			<VersionJsonText Condition="Exists('$(VersionJsonPath)')">$([System.IO.File]::ReadAllText('$(VersionJsonPath)'))</VersionJsonText>
 			<MajorVersion Condition=" '$(VersionJsonText)' != '' ">$([System.Text.RegularExpressions.Regex]::Match($(VersionJsonText), '"major"\s*:\s*(\d+)').Groups[1].Value)</MajorVersion>
 			<MajorVersion Condition=" '$(MajorVersion)' == '' ">0</MajorVersion>
-			<MinorVersion Condition=" '$(VersionJsonText)' != '' ">$([System.Text.RegularExpressions.Regex]::Match($(VersionJsonText), '"minor"\s*:\s*(\d+)').Groups[1].Value)</MinorVersion>
-			<MinorVersion Condition=" '$(MinorVersion)' == '' ">0</MinorVersion>
 		</PropertyGroup>
 
 		<!-- Git branch. git이 없거나 .git 메타데이터가 없는 빌드 환경(예: git을 설치하지 않은
@@ -44,7 +42,7 @@
 			<CurrentYear>$([System.DateTime]::UtcNow.Year.ToString())</CurrentYear>
 			<CurrentMonth>$([System.DateTime]::UtcNow.Month.ToString('00'))</CurrentMonth>
 			<DateTimeVersion>$([System.Convert]::ToInt32($(CurrentYear.Substring(1))$(CurrentMonth)))</DateTimeVersion>
-			<FullVersion>$(MajorVersion).$(MinorVersion).$(DateTimeVersion).$(GitBranchCommitCount)</FullVersion>
+			<FullVersion>$(MajorVersion).$(DateTimeVersion).$(GitBranchCommitCount)</FullVersion>
 
 			<!-- 버전 정보 -->
 			<AssemblyVersion>$(FullVersion)</AssemblyVersion>
