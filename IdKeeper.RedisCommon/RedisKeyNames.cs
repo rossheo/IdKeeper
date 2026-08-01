@@ -13,8 +13,10 @@ public static class RedisKeyNames
 
 		public static string Bitmap => $"IdKeeper/AllocatedId/{Tag}/Bitmap";
 		public static string ExpiryIndex => $"IdKeeper/AllocatedId/{Tag}/ExpiryIndex";
-		public static string Entry(Int32 id) => $"IdKeeper/AllocatedId/{Tag}/{id}";
-		public static string ByRequester(string requester) => $"IdKeeper/AllocatedId/{Tag}/ByRequester/{requester}";
+		public static string EntryPrefix => $"IdKeeper/AllocatedId/{Tag}/";
+		public static string Entry(Int32 id) => $"{EntryPrefix}{id}";
+		public static string ByRequesterPrefix => $"{EntryPrefix}ByRequester/";
+		public static string ByRequester(string requester) => $"{ByRequesterPrefix}{requester}";
 	}
 
 	public static class XApiKey

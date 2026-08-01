@@ -44,7 +44,8 @@ public class IdKeeperControllerAlloc(
 
 			case AllocResult.InsufficientIds:
 				logger.LogWarning(
-					"Concurrent allocation contention or capacity exceeded. Requester {Requester}, Requested {RequestedCount}.",
+					"Concurrent allocation contention or capacity exceeded. " +
+					"Requester {Requester}, Requested {RequestedCount}.",
 					request.Requester, request.Count);
 				return Conflict(
 					$"Requested count {request.Count} exceeds the remaining available IDs, or concurrent " +

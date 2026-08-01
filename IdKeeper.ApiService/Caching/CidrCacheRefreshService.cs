@@ -27,10 +27,19 @@ public sealed class CidrCacheRefreshService(
 		await RefreshAsync(stoppingToken);
 
 		ISubscriber subscriber = multiplexer.GetSubscriber();
-		await subscriber.SubscribeAsync(RedisChannel.Literal(RedisKeyNames.PubSub.CidrChanged), async (_, _) =>
+		ChannelMessageQueue queue = await subscriber.SubscribeAsync(
+			RedisChannel.Literal(RedisKeyNames.PubSub.CidrChanged));
+		queue.OnMessage(async _ =>
 		{
-			logger.LogInformation("CIDR change notification received. Refreshing cache.");
-			await RefreshAsync(stoppingToken);
+			try
+			{
+				logger.LogInformation("CIDR change notification received. Refreshing cache.");
+				await RefreshAsync(stoppingToken);
+			}
+			catch (Exception ex)
+			{
+				logger.LogError(ex, "Failed to handle CIDR change notification.");
+			}
 		});
 
 		// DDNS 호스트명의 IP는 Pub/Sub 알림 없이도 바뀔 수 있으므로 주기적으로 재해석한다.

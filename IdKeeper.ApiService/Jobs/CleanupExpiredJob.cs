@@ -61,8 +61,8 @@ public class CleanupExpiredJob(
 				RedisKey[] keys = [RedisKeyNames.AllocatedId.Bitmap, RedisKeyNames.AllocatedId.ExpiryIndex];
 				RedisValue[] values =
 				[
-					"IdKeeper/AllocatedId/{AllocatedId}/",
-					"IdKeeper/AllocatedId/{AllocatedId}/ByRequester/",
+					RedisKeyNames.AllocatedId.EntryPrefix,
+					RedisKeyNames.AllocatedId.ByRequesterPrefix,
 					.. expiredIds,
 				];
 

@@ -105,7 +105,8 @@ await using (AsyncServiceScope snowflakeLayoutScope = app.Services.CreateAsyncSc
 		snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutRepository>();
 	SnowflakeLayout snowflakeLayout = await snowflakeLayoutRepository.GetAsync();
 	snowflakeLayout.EnsureValid();
-	snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutHolder>().Initialize(snowflakeLayout);
+	snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutHolder>()
+		.Initialize(snowflakeLayout);
 }
 
 app.UseForwardedHeaders();

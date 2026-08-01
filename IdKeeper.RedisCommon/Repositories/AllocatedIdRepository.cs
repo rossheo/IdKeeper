@@ -49,7 +49,7 @@ public sealed class AllocatedIdRepository(
 			requester,
 			createdAtUtc.ToUnixSeconds(),
 			expiredAtUtc.ToUnixSeconds(),
-			"IdKeeper/AllocatedId/{AllocatedId}/",
+			RedisKeyNames.AllocatedId.EntryPrefix,
 			description ?? string.Empty,
 		];
 
@@ -89,7 +89,7 @@ public sealed class AllocatedIdRepository(
 
 		RedisValue[] values =
 		[
-			"IdKeeper/AllocatedId/{AllocatedId}/",
+			RedisKeyNames.AllocatedId.EntryPrefix,
 			updatedAtUtc.ToUnixSeconds(),
 			expiredAtUtc.ToUnixSeconds(),
 		];
@@ -121,7 +121,7 @@ public sealed class AllocatedIdRepository(
 
 		RedisValue[] values =
 		[
-			"IdKeeper/AllocatedId/{AllocatedId}/",
+			RedisKeyNames.AllocatedId.EntryPrefix,
 		];
 
 		RedisResult result = await Db.ScriptEvaluateAsync(
