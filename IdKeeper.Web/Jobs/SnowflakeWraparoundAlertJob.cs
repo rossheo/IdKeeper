@@ -80,7 +80,8 @@ public class SnowflakeWraparoundAlertJob(
 		}
 	}
 
-	private async Task SendAlertAsync(string label, DateTime wraparoundDateUtc, CancellationToken cancellationToken)
+	private async Task SendAlertAsync(
+		string label, DateTime wraparoundDateUtc, CancellationToken cancellationToken)
 	{
 		List<string> webhookUrls =
 			await credentialSettingsRepository.GetAllDiscordWebhookUrlsAsync(cancellationToken);

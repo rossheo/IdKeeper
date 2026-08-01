@@ -1,6 +1,7 @@
 @page "/redisbackup"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = Role.Administrator)]
+@using IdKeeper.Database.Redis
 
 @inject RedisBackupService RedisBackupService
 @inject RedisBackupScheduleRepository RedisBackupScheduleRepository
@@ -48,7 +49,7 @@
 		<MudPaper Elevation="2" Class="pa-4">
 			<MudText Typo="Typo.h6" Class="mb-2">내보내기 (Export)</MudText>
 			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
-				"IdKeeper/*" 전체 키를 NDJSON 파일로 내보냅니다.
+				"@RedisKeyNames.AllKeysPattern" 전체 키를 NDJSON 파일로 내보냅니다.
 			</MudText>
 			<MudStack Row="true" Spacing="2">
 				<MudButton Variant="Variant.Filled"
@@ -71,7 +72,7 @@
 			<MudText Typo="Typo.h6" Class="mb-2">가져오기 (Import)</MudText>
 			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
 				⚠️ 파괴적 작업입니다. 기본값은 파일에 있는 키만 REPLACE(그 외 기존 키는 유지)하며,
-				"가져오기 전 전체 삭제"를 켜면 현재 "IdKeeper/*" 전체를 지우고 파일 내용으로 완전히
+				"가져오기 전 전체 삭제"를 켜면 현재 "@RedisKeyNames.AllKeysPattern" 전체를 지우고 파일 내용으로 완전히
 				미러링합니다.
 			</MudText>
 
@@ -197,7 +198,7 @@
 		<MudPaper Elevation="2" Class="pa-4">
 			<MudText Typo="Typo.h6" Class="mb-2">Redis 마이그레이션</MudText>
 			<MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">
-				이 Redis의 "IdKeeper/*" 전체를 다른 Redis로 직접 이관합니다.
+				이 Redis의 "@RedisKeyNames.AllKeysPattern" 전체를 다른 Redis로 직접 이관합니다.
 				DUMP/RESTORE(백업 가져오기)는 Redis 버전이 다르면
 				"DUMP payload version or checksum are wrong" 오류로 실패할 수 있어,
 				타입별 네이티브 커맨드(GET/HGETALL/SMEMBERS 등)로 값을 읽고 써서
@@ -229,7 +230,7 @@
 				</MudStack>
 
 				<MudCheckBox T="bool" @bind-Value="_purgeBeforeMigrate" Color="Color.Warning"
-							  Label="마이그레이션 전 대상 Redis의 IdKeeper/* 전체 삭제(완전 미러링)" />
+							  Label="@($"마이그레이션 전 대상 Redis의 {RedisKeyNames.AllKeysPattern} 전체 삭제(완전 미러링)")" />
 
 				<MudButton Variant="Variant.Filled"
 						   Color="Color.Error"
@@ -508,7 +509,7 @@
 		Int32 currentKeyCount = await RedisBackupService.CountKeysAsync();
 
 		string message = _purgeBeforeImport
-			? $"현재 Redis의 \"IdKeeper/*\" 전체({currentKeyCount}개 키)를 삭제한 뒤 " +
+			? $"현재 Redis의 \"{RedisKeyNames.AllKeysPattern}\" 전체({currentKeyCount}개 키)를 삭제한 뒤 " +
 			  $"\"{_selectedFileName}\"의 {_selectedKeyCount}개 키로 완전히 대체합니다. 되돌릴 수 없습니다. 계속할까요?"
 			: $"\"{_selectedFileName}\"의 {_selectedKeyCount}개 키를 현재 Redis(전체 {currentKeyCount}개 키)에 " +
 			  $"REPLACE 방식으로 덮어씁니다(파일에 없는 기존 키는 유지). 계속할까요?";
@@ -597,10 +598,10 @@
 
 		string target = $"{_migrationHost}:{_migrationPort}";
 		string message = _purgeBeforeMigrate
-			? $"이 Redis의 \"IdKeeper/*\" 전체({currentKeyCount}개 키)를 {target}로 이관합니다. " +
-			  "대상 Redis의 기존 \"IdKeeper/*\"는 먼저 전부 삭제됩니다. " +
+			? $"이 Redis의 \"{RedisKeyNames.AllKeysPattern}\" 전체({currentKeyCount}개 키)를 {target}로 이관합니다. " +
+			  $"대상 Redis의 기존 \"{RedisKeyNames.AllKeysPattern}\"는 먼저 전부 삭제됩니다. " +
 			  "되돌릴 수 없습니다. 계속할까요?"
-			: $"이 Redis의 \"IdKeeper/*\" 전체({currentKeyCount}개 키)를 {target}로 이관합니다" +
+			: $"이 Redis의 \"{RedisKeyNames.AllKeysPattern}\" 전체({currentKeyCount}개 키)를 {target}로 이관합니다" +
 			  "(대상의 기존 키는 유지, 같은 키만 덮어씀). 계속할까요?";
 
 		bool? confirmed = await DialogService.ShowMessageBoxAsync(
@@ -650,7 +651,7 @@
 		Int32 currentKeyCount = await RedisBackupService.CountKeysAsync();
 
 		string message = _purgeBeforeImport
-			? $"현재 Redis의 \"IdKeeper/*\" 전체({currentKeyCount}개 키)를 삭제한 뒤 " +
+			? $"현재 Redis의 \"{RedisKeyNames.AllKeysPattern}\" 전체({currentKeyCount}개 키)를 삭제한 뒤 " +
 			  $"\"{fileName}\"의 내용으로 완전히 대체합니다. 되돌릴 수 없습니다. 계속할까요?"
 			: $"\"{fileName}\"의 키를 현재 Redis(전체 {currentKeyCount}개 키)에 " +
 			  $"REPLACE 방식으로 덮어씁니다(파일에 없는 기존 키는 유지). 계속할까요?";

@@ -34,7 +34,8 @@ public sealed class RedisSeedHostedService(
 
 	private async Task SeedIdentityRoleAsync(IServiceScope scope, CancellationToken stoppingToken)
 	{
-		RoleManager<IdentityRole> roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+		RoleManager<IdentityRole> roleManager =
+			scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
 
 		string[] roleNames = ReflectionConstant.GetPublicStaticStringMemberValues(typeof(Role));
 		foreach (string roleName in roleNames)
@@ -50,7 +51,8 @@ public sealed class RedisSeedHostedService(
 
 	private async Task SeedInitialAdminAsync(IServiceScope scope, CancellationToken stoppingToken)
 	{
-		UserManager<IdentityUser> userManager = scope.ServiceProvider.GetRequiredService<UserManager<IdentityUser>>();
+		UserManager<IdentityUser> userManager =
+			scope.ServiceProvider.GetRequiredService<UserManager<IdentityUser>>();
 
 		List<IdentityUser> users = await userStore.GetAllUsersAsync(stoppingToken);
 		if (users.Count != 1)

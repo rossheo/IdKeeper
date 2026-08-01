@@ -461,9 +461,12 @@
 	#region Hostname
 	private async Task ResolveHostnamesForDisplayAsync()
 	{
-		foreach (XApiAllowedHostname item in _hostnameItems)
+		(string Hostname, string Resolved)[] results = await Task.WhenAll(
+			_hostnameItems.Select(async item => (item.Hostname, await ResolveForDisplayAsync(item.Hostname))));
+
+		foreach ((string hostname, string resolved) in results)
 		{
-			_resolvedIpsByHostname[item.Hostname] = await ResolveForDisplayAsync(item.Hostname);
+			_resolvedIpsByHostname[hostname] = resolved;
 		}
 		await InvokeAsync(StateHasChanged);
 	}

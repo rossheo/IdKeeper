@@ -136,17 +136,12 @@
 		{
 			List<IdentityUser> users = await UserStore.GetAllUsersAsync();
 
-			List<UserRoleInfo> items = [];
-			foreach (IdentityUser u in users)
+			UserRoleInfo[] items = await Task.WhenAll(users.Select(async u => new UserRoleInfo
 			{
-				IList<string> roles = await UserManager.GetRolesAsync(u);
-				items.Add(new UserRoleInfo
-				{
-					UserName = u.UserName!,
-					Role = string.Join(",", roles),
-				});
-			}
-			_items = items;
+				UserName = u.UserName!,
+				Role = string.Join(",", await UserManager.GetRolesAsync(u)),
+			}));
+			_items = [.. items];
 		}
 		finally
 		{

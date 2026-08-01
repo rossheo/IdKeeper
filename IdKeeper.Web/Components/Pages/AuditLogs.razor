@@ -132,7 +132,8 @@
 		AuditLogAction.XApiWhitelistHostnameDescriptionUpdated,
 	];
 
-	private async Task<TableData<AuditLog>> LoadServerDataAsync(TableState state, CancellationToken cancellationToken)
+	private async Task<TableData<AuditLog>> LoadServerDataAsync(
+		TableState state, CancellationToken cancellationToken)
 	{
 		(List<AuditLog> items, Int32 totalItems) = await AuditLogRepository.QueryAsync(
 			string.IsNullOrWhiteSpace(_filterAction) ? null : _filterAction,
