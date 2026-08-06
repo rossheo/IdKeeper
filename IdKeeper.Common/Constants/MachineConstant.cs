@@ -12,6 +12,13 @@ public class MachineConstant
 	private static Lazy<string> _uniqueProcessId =
 		new(() => $"{GetMachineId()}|{Environment.ProcessId}|{GetProcessStartTimeUnixMs()}", isThreadSafe: true);
 
+	/// <summary>
+	/// 프로세스 인스턴스마다 유일해야 한다 (기본값은 machineId|PID|프로세스시작시각).
+	/// 경고: IdKeeper 서버의 Alloc은 같은 requester가 다시 요청하면 기존에 할당된 노드 ID를
+	/// 그대로 돌려주는 멱등 동작을 한다(응답 유실 재시도 복구용). 이 값을 호스트명·서비스명처럼
+	/// 여러 프로세스가 공유하는 값으로 바꾸면, "같은 프로세스가 자기 ID를 돌려받는다"가
+	/// "서로 다른 두 프로세스가 같은 노드 ID를 받는다"로 바뀌어 Snowflake ID가 중복된다.
+	/// </summary>
 	public static string UniqueProcessId
 	{
 		get => _uniqueProcessId.Value;
