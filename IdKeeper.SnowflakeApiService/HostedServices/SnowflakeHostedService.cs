@@ -106,7 +106,8 @@ public class SnowflakeHostedService : BackgroundService
 					scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
 
 				Int32 requestCount = _snowflakeSetting.GeneratorCount;
-				RequestV1Alloc requestAlloc = new(Count: requestCount, MachineConstant.UniqueProcessId);
+				RequestV1Alloc requestAlloc = new(
+					Count: requestCount, MachineConstant.UniqueProcessId, DateTimeOffset.UtcNow);
 				ResponseV1Alloc? responseAlloc =
 					await idKeeperApiClient.PostIdKeeperAlloc(requestAlloc, cancellationToken);
 
@@ -181,11 +182,12 @@ public class SnowflakeHostedService : BackgroundService
 					// 길이를 넘어선 것이므로, 발급이 즉시 전량 차단되는 상태로 기동하지 않도록
 					// fail-fast 한다.
 					// 주의: 이 검사가 잡는 건 로컬 시계가 서버보다 '앞선' 방향뿐이다. 로컬이
-					// '뒤처진' 경우 (만료 - 로컬now)가 오히려 리스보다 커져 항상 통과한다.
-					// 뒤처진 방향이야말로 서버가 회수·재할당한 노드 ID를 계속 쓰게 되는 중복
-					// 발급 위험이지만, 이를 검출하려면 서버의 현재 시각이 필요하고 현재 Alloc/
-					// Renew 응답에는 포함되어 있지 않다. 지금은 만료 절반 시점 갱신이 제공하는
-					// 마진(리스의 1/2)에 의존한다.
+					// '뒤처진' 경우 (만료 - 로컬now)가 오히려 리스보다 커져 항상 통과한다 —
+					// 클라이언트가 로컬 정보만으로 그 방향을 검출할 수 없다는 사실은 그대로다.
+					// 대신 요청에 ClientUtcNow를 실어 보내 서버가 판정한다: 뒤처짐이
+					// CleanupGracePeriod를 넘으면 서버가 Alloc을 409로 거부하므로 여기까지
+					// 오지 않는다(Renew는 거부하지 않고 경고만 한다).
+					// 따라서 이 로컬 검사는 '앞선' 방향 전용 가드로 남는다.
 					if (expiredAtUtc <= utcNow)
 					{
 						_logger.LogCritical(
@@ -449,7 +451,7 @@ public class SnowflakeHostedService : BackgroundService
 			IdKeeperApiClient idKeeperApiClient =
 				scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
 
-			RequestV1Renew requestRenew = new(MachineConstant.UniqueProcessId);
+			RequestV1Renew requestRenew = new(MachineConstant.UniqueProcessId, DateTimeOffset.UtcNow);
 			ResponseV1Renew? responseRenew =
 				await idKeeperApiClient.PostIdKeeperRenew(requestRenew, cancellationToken);
 
@@ -494,7 +496,8 @@ public class SnowflakeHostedService : BackgroundService
 
 			// 방금 갱신한 리스가 로컬 시계 기준 이미 만료 — 두 시계의 괴리가 리스 길이를
 			// 넘어선 것이므로 InitializeAsync와 동일하게 fail-fast 한다.
-			// (로컬 시계가 앞선 방향만 검출된다. 자세한 한계는 InitializeAsync의 주석 참고.)
+			// (로컬 시계가 앞선 방향 전용 가드다. 뒤처진 방향은 서버가 ClientUtcNow로 판정하며,
+			// Renew에서는 거부하지 않고 경고만 남긴다. 자세한 내용은 InitializeAsync의 주석 참고.)
 			if (expiredAtUtc <= utcNow)
 			{
 				string message = $"Renewed lease is already expired by the local clock" +

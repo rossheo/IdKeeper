@@ -1,5 +1,6 @@
 using Asp.Versioning;
 using IdKeeper.ApiService.AuthorizationFilters;
+using IdKeeper.ApiService.ClockSkew;
 using IdKeeper.ApiService.Requests;
 using IdKeeper.ApiService.Responses;
 using IdKeeper.ApiService.Settings;
@@ -17,7 +18,8 @@ public class IdKeeperControllerAlloc(
 	ILogger<IdKeeperControllerAlloc> logger,
 	AllocatedIdRepository allocatedIdRepository,
 	IdKeeperSetting setting,
-	SnowflakeLayoutHolder snowflakeLayoutHolder) : ControllerBase
+	SnowflakeLayoutHolder snowflakeLayoutHolder,
+	ClockSkewPolicy clockSkewPolicy) : ControllerBase
 {
 	[HttpPost("Alloc")]
 	[ServiceFilter<XApiKeyFilter>]
@@ -31,6 +33,16 @@ public class IdKeeperControllerAlloc(
 
 		string actor = HttpContext.Items[XApiKeyConstant.XApiKeyOwnerItemKey] as string ?? request.Requester;
 		string? remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+		// 반드시 AllocAsync 이전에 판정한다. 뒤에 두면 리스를 이미 쓴 뒤 거부하게 되고,
+		// Alloc이 멱등이라 재시도가 같은 ID를 받아 또 거부되어 리스가 고아로 남는다.
+		ClockSkewVerdict skewVerdict = await clockSkewPolicy.EvaluateAsync(
+			"Alloc", request.Requester, request.ClientUtcNow, remoteIp,
+			allowReject: true, cancellationToken);
+		if (skewVerdict.Reject)
+		{
+			return Conflict(skewVerdict.RejectMessage);
+		}
 
 		AllocResult result = await allocatedIdRepository.AllocAsync(
 			request.Requester, request.Count, maxNodeIdInclusive, setting.FirstTimeExpiration,

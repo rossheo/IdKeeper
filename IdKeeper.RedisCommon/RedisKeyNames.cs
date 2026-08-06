@@ -118,6 +118,17 @@ public static class RedisKeyNames
 			$"IdKeeper/SnowflakeWraparoundAlert/{Tag}/{wraparoundTicks}/{milestone}";
 	}
 
+	public static class ClockSkew
+	{
+		private const string Tag = "{ClockSkew}";
+
+		// Alloc/Renew 처리가 끝난 뒤 EVAL 밖에서만 쓰므로 {AllocatedId}와 슬롯을 공유할 필요가
+		// 없다 (AuditLog와 같은 선례).
+		// All 인덱스를 두지 않는다: 관리 화면은 AllocatedId 행에서 이미 requester 목록을 갖고
+		// 있어 requester별 직접 조회로 충분하고, 요청 경로에 SCAN 선례도 없다.
+		public static string Entry(string requester) => $"IdKeeper/ClockSkew/{Tag}/{requester}";
+	}
+
 	public static class CredentialSettings
 	{
 		private const string Tag = "{CredentialSettings}";

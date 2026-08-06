@@ -3,6 +3,7 @@ using Asp.Versioning.ApiExplorer;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using IdKeeper.ApiService.AuthorizationFilters;
+using IdKeeper.ApiService.ClockSkew;
 using IdKeeper.ApiService.Caching;
 using IdKeeper.ApiService.Settings;
 using IdKeeper.ApiService.Transformers;
@@ -54,6 +55,8 @@ builder.Services.AddSingleton<CidrCache>();
 builder.Services.AddHostedService<CidrCacheRefreshService>();
 
 builder.Services.AddSingleton<SnowflakeLayoutHolder>();
+
+builder.Services.AddSingleton<ClockSkewPolicy>();
 
 // TickerQ.Caching.StackExchangeRedis(v10.4.0)는 도입하지 않는다: 패키지의 Redis 키에 해시태그가 없어
 // 실제 hash-slot 샤딩 Redis Cluster에서 CROSSSLOT 위험이 있고, CronTicker 시딩(MigrateDefinedCronTickers)이

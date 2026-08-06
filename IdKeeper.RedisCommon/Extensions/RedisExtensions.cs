@@ -19,6 +19,7 @@ public static class RedisExtensions
 		builder.Services.AddSingleton<RedisLockFactory>();
 
 		builder.Services.AddSingleton<AllocatedIdRepository>();
+		builder.Services.AddSingleton<ClockSkewRepository>();
 		builder.Services.AddSingleton<XApiKeyRepository>();
 		builder.Services.AddSingleton<XApiAllowedCidrRepository>();
 		builder.Services.AddSingleton<XApiAllowedHostnameRepository>();
