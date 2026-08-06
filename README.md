@@ -46,6 +46,7 @@ docker compose up -d
       - 설정 (IdKeeperSetting)
         - 임대 기간(Lease duration) 설정 (기본값: 48시간)
         - 최초 만료 시간(FirstTimeExpiration) 설정 (기본값: 10분, 1~20분 범위 설정 가능)
+        - 회수 유예 시간(CleanupGracePeriod) 설정 (기본값: 10분, 0~1시간 범위 설정 가능. 0이면 유예 없음)
   - `IdKeeper.SnowflakeApiService`
     - `IdKeeper.ApiService`에서 노드 Id를 임대받아 SnowflakeId를 발급하는 API
       - Alloc (SnowflakeId 발급, 필요한 개수)
@@ -93,6 +94,8 @@ docker compose up -d
       - 필요한 Id 개수만큼 할당 가능한지 확인한다.
       - 할당한 Id마다 Requester에 MachineId + PID를 등록한다.
       - 최초 임대 기간(Lease duration)은 10분으로 설정한다. (Renew시 임대 기간은 기본값으로 설정)
+      - 같은 Requester가 이미 Id를 보유 중이면 멱등 처리한다. 요청 개수가 보유 개수와 같으면 기존 Id 목록을 그대로 반환하고 임대만 최초 만료 시간으로 갱신하며, 개수가 다르면 실패로 처리한다.
+        - 응답이 유실되어(타임아웃 등) 클라이언트가 재시도한 경우를 복구하기 위함이다. Requester가 MachineId + PID + 프로세스 시작 시각이라 프로세스 단위로 유일하므로, 같은 Requester는 같은 프로세스임이 보장된다.
     - 서버 응답 (Success)
       - json array로 Id, ExpiredAtUtc를 받는다.
       - ExpiredAtUtc에 맞춰 프로그램 종료 시간을 등록한다.
@@ -125,6 +128,11 @@ docker compose up -d
 
 ## 임대 기간 만료시 삭제 정책
 - RestAPI서버에서 10분마다 주기적으로 만료된 Id를 삭제한다.
+- 단, 만료 즉시 삭제하지 않고 회수 유예 시간(CleanupGracePeriod, 기본값 10분)이 지난 것만 삭제한다.
+  - 클라이언트는 자기 로컬 시계로 만료를 판단해 발급을 멈추지만, 노드 Id가 실제로 다른 프로세스에게 넘어가는 시점은 이 삭제 작업이 실행될 때다. 클라이언트 시계가 서버보다 뒤처져 있으면 서버가 이미 회수·재할당한 노드 Id를 클라이언트가 계속 쓰게 되어 SnowflakeId가 중복된다. 유예를 두면 안전 조건이 "시계 오차 < 유예 시간"이라는 유한값이 되며, 시계 오차뿐 아니라 GC 스톨·컨테이너 프리즈·서버 레플리카 간 시계 차이도 함께 흡수한다.
+  - 삭제 작업이 10분 주기이므로 **실효 회수 지연은 `유예 시간 + [0, 10분]`**이다. 유예 시간은 하한이지 정확값이 아니다.
+  - 정상 종료(Remove)는 유예를 타지 않고 즉시 회수된다. 유예가 실제로 적용되는 건 비정상 종료(크래시, SIGKILL, 노드 유실)뿐이다.
+  - 유예 기간 동안 해당 Id는 관리 화면에서 "만료됨"으로 표시되면서도 잔여 Id 개수에는 계속 사용 중으로 집계된다. 실제 할당 가능 여부와 일치하는 정상 동작이다.
 
 ## SnowflakeId 발급 정책 (IdKeeper.SnowflakeApiService)
 - 초기화 (Alloc 응답 검증)

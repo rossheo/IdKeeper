@@ -1,3 +1,4 @@
+using IdKeeper.ApiService.Settings;
 using IdKeeper.Database.Redis;
 using IdKeeper.Database.Redis.Extensions;
 using IdKeeper.Database.Redis.Locking;
@@ -11,7 +12,8 @@ public class CleanupExpiredJob(
 	ILogger<CleanupExpiredJob> logger,
 	IConnectionMultiplexer multiplexer,
 	RedisLockFactory redisLockFactory,
-	LuaScriptLoader scripts)
+	LuaScriptLoader scripts,
+	IdKeeperSetting setting)
 {
 	public static class FunctionNames
 	{
@@ -44,7 +46,9 @@ public class CleanupExpiredJob(
 		try
 		{
 			IDatabase db = multiplexer.GetDatabase();
-			Int64 cutoffUnix = DateTime.UtcNow.ToUnixSeconds();
+			// 클라이언트 시계가 서버보다 뒤처진 경우를 흡수하기 위해 회수 기준 시각을
+			// 유예 시간만큼 과거로 당긴다. CleanupGracePeriod=0이면 기존 동작과 동일하다.
+			Int64 cutoffUnix = DateTime.UtcNow.Subtract(setting.CleanupGracePeriod).ToUnixSeconds();
 			Int32 totalDeleted = 0;
 
 			while (true)
