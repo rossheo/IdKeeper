@@ -45,10 +45,10 @@ docker compose up -d
         - Version (버전 정보)
       - 설정 (IdKeeperSetting)
         - 임대 기간(Lease duration) 설정 (기본값: 48시간)
-        - 최초 만료 시간(FirstTimeExpiration) 설정 (고정값: 10분)
+        - 최초 만료 시간(FirstTimeExpiration) 설정 (기본값: 10분, 1~20분 범위 설정 가능)
   - `IdKeeper.SnowflakeApiService`
     - `IdKeeper.ApiService`에서 노드 Id를 임대받아 SnowflakeId를 발급하는 API
-      - GetSnowFlakeId (필요한 개수)
+      - Alloc (SnowflakeId 발급, 필요한 개수)
       - Version (버전 정보)
   - `IdKeeper.Web`
     - MudBlazor 기반 관리자 페이지
@@ -57,6 +57,10 @@ docker compose up -d
       - Redis 백업(예약/수동) 관리
   - `IdKeeper.RedisCommon`, `IdKeeper.Common`, `IdKeeper.ServiceDefaults`
     - 서비스 간 공유 Redis 접근/도메인 모델, OpenTelemetry 등 공통 설정
+  - `IdKeeper.AppHost`
+    - .NET Aspire 오케스트레이션(로컬 개발) + Docker Compose 산출물 생성
+  - `IdKeeper.RedisBackupTool`
+    - Redis 전체 키를 파일로 export/import하는 커맨드라인 도구(`export`/`import`)
 
 ## Id 할당에 대한 기본 정책 (SnowflakeId의 비트할당과 다르다)
 | 비트 수    | 설명                                   |
@@ -103,7 +107,7 @@ docker compose up -d
       - Requester(MachineId + PID) 정보와 일치하는 Id 목록을 찾는다.
       - 임대 기간(Lease duration)을 기본값으로 ExpiredAtUtc를 업데이트 한다.
     - 서버 응답
-      - json array로 Id, 임대 기간(Lease duration)을 받는다.
+      - json array로 Id, ExpiredAtUtc를 받는다.
       - 업데이트 요청 스케쥴러에 등록한다. (임대 기간 * 1/2 ~ 만료시간까지 10분 단위로 업데이트)
       - ExpiredAtUtc에 맞춰 프로그램 종료 시간도 업데이트 한다.
   - Step 3)

@@ -34,14 +34,14 @@ public static partial class BlockedInteger
 			BlockCount > 0 ? (Double)CompressedSize / BlockCount : 0.0;
 
 		/// <summary>블록 타입별 분포.</summary>
-		public Dictionary<String, Int32> BlockTypeDistribution { get; set; } = [];
+		public Dictionary<string, Int32> BlockTypeDistribution { get; set; } = [];
 	}
 
 	private static class StatisticsHelper
 	{
 		internal static void AddBlockStatistics(PbBlock block, CompressionStatistics statistics)
 		{
-			String blockType = block.BlockOneofCase.ToString();
+			string blockType = block.BlockOneofCase.ToString();
 
 			statistics.BlockTypeDistribution.TryAdd(blockType, 0);
 			statistics.BlockTypeDistribution[blockType]++;

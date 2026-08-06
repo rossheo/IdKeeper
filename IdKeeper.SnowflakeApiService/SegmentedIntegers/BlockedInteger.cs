@@ -271,7 +271,7 @@ public static partial class BlockedInteger
 	/// <param name="errors">발견된 에러 메시지 목록</param>
 	/// <returns>유효하면 true, 그렇지 않으면 false</returns>
 	/// <exception cref="ArgumentNullException">proto가 null인 경우</exception>
-	public static bool TryValidate(PbBlockedInteger proto, out List<String> errors)
+	public static bool TryValidate(PbBlockedInteger proto, out List<string> errors)
 		=> TryValidate(proto, Int32.MaxValue, out errors);
 
 	/// <summary>
@@ -294,7 +294,7 @@ public static partial class BlockedInteger
 	/// <returns>유효하면 true, 그렇지 않으면 false</returns>
 	/// <exception cref="ArgumentNullException">proto가 null인 경우</exception>
 	/// <exception cref="ArgumentOutOfRangeException">maxTotalValues가 1 미만인 경우</exception>
-	public static bool TryValidate(PbBlockedInteger proto, Int64 maxTotalValues, out List<String> errors)
+	public static bool TryValidate(PbBlockedInteger proto, Int64 maxTotalValues, out List<string> errors)
 	{
 		ArgumentNullException.ThrowIfNull(proto);
 		ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxTotalValues);

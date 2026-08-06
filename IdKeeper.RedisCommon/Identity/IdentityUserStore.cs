@@ -255,7 +255,7 @@ public sealed class IdentityUserStore(IConnectionMultiplexer multiplexer, LuaScr
 		return Task.CompletedTask;
 	}
 
-	public Task<int> IncrementAccessFailedCountAsync(IdentityUser user, CancellationToken cancellationToken)
+	public Task<Int32> IncrementAccessFailedCountAsync(IdentityUser user, CancellationToken cancellationToken)
 	{
 		user.AccessFailedCount++;
 		return Task.FromResult(user.AccessFailedCount);
@@ -267,7 +267,7 @@ public sealed class IdentityUserStore(IConnectionMultiplexer multiplexer, LuaScr
 		return Task.CompletedTask;
 	}
 
-	public Task<int> GetAccessFailedCountAsync(IdentityUser user, CancellationToken cancellationToken) =>
+	public Task<Int32> GetAccessFailedCountAsync(IdentityUser user, CancellationToken cancellationToken) =>
 		Task.FromResult(user.AccessFailedCount);
 
 	public Task<bool> GetLockoutEnabledAsync(IdentityUser user, CancellationToken cancellationToken) =>
