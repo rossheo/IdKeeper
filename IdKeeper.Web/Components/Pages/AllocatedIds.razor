@@ -181,8 +181,14 @@
 	// 경과 시간을 붙인다. skew는 시각이 아니라 기간이라 _useLocalTime 토글의 영향을 받지 않는다.
 	private static string FormatSkew(ClockSkewObservation skew)
 	{
-		string direction = skew.SkewSeconds >= 0 ? "뒤처짐" : "앞섬";
 		string elapsed = DateTimeConstant.GetElapsedTime(skew.ObservedAtUtc);
+		if (skew.SkewSeconds == 0)
+		{
+			// 0은 뒤처짐도 앞섬도 아니다. 방향을 붙이면 오해를 준다.
+			return $"0s (동기, {elapsed})";
+		}
+
+		string direction = skew.SkewSeconds > 0 ? "뒤처짐" : "앞섬";
 		return $"{skew.SkewSeconds:+#;-#;0}s ({direction}, {elapsed})";
 	}
 
