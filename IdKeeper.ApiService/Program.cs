@@ -55,7 +55,13 @@ builder.Services.AddHostedService<CidrCacheRefreshService>();
 
 builder.Services.AddSingleton<SnowflakeLayoutHolder>();
 
-builder.Services.AddTickerQ();
+// TickerQ.Caching.StackExchangeRedis(v10.4.0)는 도입하지 않는다: 패키지의 Redis 키에 해시태그가 없어
+// 실제 hash-slot 샤딩 Redis Cluster에서 CROSSSLOT 위험이 있고, CronTicker 시딩(MigrateDefinedCronTickers)이
+// 원자적이지 않아 다중 노드 동시 기동 시 오히려 중복 실행을 유발할 수 있다. 대신 각 Job이
+// RedisLockFactory 기반 분산 락으로 다중 인스턴스 동시 실행(overlap)을 직접 방지한다
+// (CleanupExpiredJob, CleanupAuditLogJob 참고). MaxConcurrency=1은 함수명별로 독립된 세마포어라
+// 서로 다른 Job끼리는 영향을 주지 않는다.
+builder.Services.AddTickerQ(opt => opt.ConfigureScheduler(scheduler => scheduler.MaxConcurrency = 1));
 
 builder.Services.AddOpenApi(options =>
 {
