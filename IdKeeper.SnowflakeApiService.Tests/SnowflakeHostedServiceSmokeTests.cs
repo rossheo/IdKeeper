@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Reflection;
 using IdGen;
 using Xunit;
+using IdKeeper.SnowflakeApiService.Exceptions;
 using IdKeeper.SnowflakeApiService.HostedServices;
 using IdKeeper.SnowflakeApiService.HttpClients;
 using IdKeeper.SnowflakeApiService.Settings;
@@ -25,6 +26,22 @@ public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
 	private static readonly FieldInfo AllocCountField =
 		typeof(SnowflakeHostedService)
 			.GetField("_allocatingCount", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+	private static readonly FieldInfo ExpiredTicksField =
+		typeof(SnowflakeHostedService)
+			.GetField("_expiredAtUtcTicks", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+	private static readonly MethodInfo RenewMethod =
+		typeof(SnowflakeHostedService)
+			.GetMethod("RenewAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+	private static readonly FieldInfo RenewTicksField =
+		typeof(SnowflakeHostedService)
+			.GetField("_renewAtUtcTicks", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+	private static readonly MethodInfo NextLoopDelayMethod =
+		typeof(SnowflakeHostedService)
+			.GetMethod("NextLoopDelay", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
 	private static readonly Type SlotType =
 		typeof(SnowflakeHostedService)
@@ -67,6 +84,21 @@ public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
 		for (Int32 i = 0; i < count; i++)
 			arr.SetValue(SlotCtor.Invoke([new IdGenerator(i, Options)]), i);
 		SlotField.SetValue(_sut, arr);
+	}
+
+	private Task InvokeRenewAsync()
+		=> (Task)RenewMethod.Invoke(_sut, [CancellationToken.None])!;
+
+	/// <summary>서버가 200 + 지정한 노드 ID 목록으로 응답하도록 설정한다 (빈 목록 = NotFound).</summary>
+	private DateTimeOffset SetRenewOk(params Int32[] ids)
+	{
+		DateTimeOffset expiry = DateTimeOffset.UtcNow.AddMinutes(50);
+		_fakeHandler.RenewResponder = () => new HttpResponseMessage(HttpStatusCode.OK)
+		{
+			Content = JsonContent.Create(new IdKeeperApiClient.ResponseV1Renew(
+				[.. ids.Select(id => new IdKeeperApiClient.IdRecord(id, expiry))]))
+		};
+		return expiry;
 	}
 
 	/// <summary>
@@ -210,6 +242,144 @@ public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
 		Assert.Empty(afterStop);
 	}
 
+	/// <summary>
+	/// 서버가 200 + 빈 목록(RenewResult.NotFound)으로 응답하면 "리스가 서버에 없다"는
+	/// 확정 신호이므로, 로컬 만료 시각이 남아 있어도 즉시 발급을 멈추고 fail-fast 해야 한다.
+	/// 이를 전송 실패와 뭉쳐 처리하면 다른 프로세스가 같은 노드 ID를 재할당받아
+	/// ID가 중복될 수 있다.
+	/// </summary>
+	[Fact]
+	public async Task Renew_LeaseGoneOnServer_StopsIssuingAndFailsFast()
+	{
+		SetSlots(3);
+		SetRenewOk();
+
+		await Assert.ThrowsAsync<SnowflakeRuntimeException>(InvokeRenewAsync);
+
+		Assert.Null(SlotField.GetValue(_sut));
+		Assert.Empty(await _sut.AllocateIdAsync(1, CancellationToken.None));
+		Assert.False(await _sut.IsReadyAsync(CancellationToken.None));
+	}
+
+	/// <summary>
+	/// 전송 실패(5xx·네트워크·타임아웃)는 리스 소멸의 근거가 아니므로 발급을 유지하고
+	/// 다음 주기에 재시도해야 한다.
+	/// </summary>
+	[Fact]
+	public async Task Renew_TransportFailure_KeepsIssuing()
+	{
+		SetSlots(3);
+		_fakeHandler.RenewResponder =
+			() => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+
+		await InvokeRenewAsync();
+
+		Assert.NotNull(SlotField.GetValue(_sut));
+		Assert.Single(await _sut.AllocateIdAsync(1, CancellationToken.None));
+		Assert.True(await _sut.IsReadyAsync(CancellationToken.None));
+	}
+
+	/// <summary>
+	/// 서버가 갱신한 노드 ID 개수가 로컬 슬롯 수와 다르면 일부 슬롯이 서버에서 사라진 것이다.
+	/// 어느 슬롯이 유효한지 특정할 수 없으므로 부분 사용 없이 fail-fast 해야 한다.
+	/// </summary>
+	[Fact]
+	public async Task Renew_IdCountMismatch_StopsIssuingAndFailsFast()
+	{
+		SetSlots(3);
+		SetRenewOk(0, 1);
+
+		await Assert.ThrowsAsync<SnowflakeRuntimeException>(InvokeRenewAsync);
+
+		Assert.Null(SlotField.GetValue(_sut));
+		Assert.Empty(await _sut.AllocateIdAsync(1, CancellationToken.None));
+	}
+
+	/// <summary>정상 갱신은 서버가 준 만료 시각을 그대로 반영해야 한다.</summary>
+	[Fact]
+	public async Task Renew_Success_UpdatesExpiry()
+	{
+		SetSlots(3);
+		DateTimeOffset expiry = SetRenewOk(0, 1, 2);
+
+		await InvokeRenewAsync();
+
+		Assert.NotNull(SlotField.GetValue(_sut));
+		Assert.Equal(expiry.UtcDateTime.Ticks, (Int64)ExpiredTicksField.GetValue(_sut)!);
+		Assert.True(await _sut.IsReadyAsync(CancellationToken.None));
+	}
+
+	/// <summary>
+	/// 리스가 만료되면 슬롯이 아직 살아 있어도 헬스체크는 Unhealthy여야 한다.
+	/// 슬롯만 보면 만료 감지(RenewLoop 다음 주기)까지 최대 RenewLoopDuration 동안
+	/// 헬스체크는 Healthy인데 모든 발급이 503이 되는 구간이 생긴다.
+	/// </summary>
+	[Fact]
+	public async Task IsReady_FalseWhenLeaseExpired_EvenIfSlotsAlive()
+	{
+		SetSlots(3);
+		Assert.True(await _sut.IsReadyAsync(CancellationToken.None));
+
+		ExpiredTicksField.SetValue(_sut, DateTime.UtcNow.AddSeconds(-1).Ticks);
+
+		Assert.False(await _sut.IsReadyAsync(CancellationToken.None));
+		// 슬롯은 아직 살아 있지만 발급도 함께 차단되어야 한다 (동일한 게이트 조건).
+		Assert.NotNull(SlotField.GetValue(_sut));
+		Assert.Empty(await _sut.AllocateIdAsync(1, CancellationToken.None));
+	}
+
+	/// <summary>갱신 시점·만료 시점을 설정한 뒤 NextLoopDelay()의 반환값을 얻는다.</summary>
+	private TimeSpan InvokeNextLoopDelay(TimeSpan renewIn, TimeSpan expireIn)
+	{
+		DateTime utcNow = DateTime.UtcNow;
+		RenewTicksField.SetValue(_sut, (utcNow + renewIn).Ticks);
+		ExpiredTicksField.SetValue(_sut, (utcNow + expireIn).Ticks);
+		return (TimeSpan)NextLoopDelayMethod.Invoke(_sut, [])!;
+	}
+
+	/// <summary>갱신 시점이 아직 오지 않았으면 설정값(RenewLoopDuration 기본 10분)을 쓴다.</summary>
+	[Fact]
+	public void NextLoopDelay_RenewNotDue_UsesConfiguredDuration()
+	{
+		TimeSpan delay = InvokeNextLoopDelay(
+			renewIn: TimeSpan.FromMinutes(5), expireIn: TimeSpan.FromMinutes(30));
+
+		Assert.Equal(TimeSpan.FromMinutes(10), delay);
+	}
+
+	/// <summary>
+	/// 갱신이 밀린 상태에서는 만료까지 남은 시간의 1/MinRenewAttempts로 간격을 좁혀
+	/// 재시도 횟수를 확보해야 한다. 잔여 20분 → 5분 (설정값 10분보다 짧으므로 채택).
+	/// </summary>
+	[Fact]
+	public void NextLoopDelay_RenewOverdue_ShrinksWithRemainingLease()
+	{
+		TimeSpan delay = InvokeNextLoopDelay(
+			renewIn: TimeSpan.FromMinutes(-1), expireIn: TimeSpan.FromMinutes(20));
+
+		Assert.InRange(delay, TimeSpan.FromMinutes(4.9), TimeSpan.FromMinutes(5));
+	}
+
+	/// <summary>만료가 임박해도 최소 간격 아래로는 내려가지 않아야 한다 (busy loop 방지).</summary>
+	[Fact]
+	public void NextLoopDelay_NearExpiry_ClampedToMinimum()
+	{
+		TimeSpan delay = InvokeNextLoopDelay(
+			renewIn: TimeSpan.FromMinutes(-1), expireIn: TimeSpan.FromSeconds(4));
+
+		Assert.Equal(TimeSpan.FromSeconds(5), delay);
+	}
+
+	/// <summary>이미 만료됐으면 최소 간격만 대기하고 다음 주기에 만료 분기로 진입한다.</summary>
+	[Fact]
+	public void NextLoopDelay_AlreadyExpired_ReturnsMinimum()
+	{
+		TimeSpan delay = InvokeNextLoopDelay(
+			renewIn: TimeSpan.FromMinutes(-1), expireIn: TimeSpan.FromSeconds(-1));
+
+		Assert.Equal(TimeSpan.FromSeconds(5), delay);
+	}
+
 	public void Dispose() => _serviceProvider.Dispose();
 }
 
@@ -219,10 +389,16 @@ sealed class FakeHttpHandler : HttpMessageHandler
 {
 	public Action? OnRemoveCalling { get; set; }
 	public SemaphoreSlim? ResponseGate { get; set; }
+	public Func<HttpResponseMessage>? RenewResponder { get; set; }
 
 	protected override async Task<HttpResponseMessage> SendAsync(
 		HttpRequestMessage request, CancellationToken cancellationToken)
 	{
+		if (RenewResponder is not null && request.RequestUri!.AbsolutePath.EndsWith("Renew"))
+		{
+			return RenewResponder();
+		}
+
 		if (request.RequestUri!.AbsolutePath.EndsWith("Remove"))
 		{
 			OnRemoveCalling?.Invoke();

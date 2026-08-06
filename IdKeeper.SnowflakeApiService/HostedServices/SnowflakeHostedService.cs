@@ -19,6 +19,12 @@ public class SnowflakeHostedService : BackgroundService
 	// Range 상한과 공유한다.
 	public const Int32 MaxAllocateCount = 10_000;
 
+	// 갱신 재시도 간격이 아무리 좁혀져도 이보다 짧아지지 않는다 (busy loop 방지).
+	private static readonly TimeSpan s_minLoopDelay = TimeSpan.FromSeconds(5);
+
+	// 갱신이 밀린 상태에서 만료까지 남은 시간을 이 횟수로 나눠 재시도 간격을 정한다.
+	private const Int32 MinRenewAttempts = 4;
+
 	private readonly ILogger _logger;
 	private readonly IServiceScopeFactory _scopeFactory;
 	private readonly SnowflakeSetting _snowflakeSetting;
@@ -31,8 +37,10 @@ public class SnowflakeHostedService : BackgroundService
 	private Int32 _nextSlot;
 	private Int32 _allocatingCount;
 	private TaskCompletionSource? _drainTcs;
-	private DateTime _renewAtUtc = DateTime.MaxValue;
-	// AllocateIdCoreAsync(임의 스레드)에서도 읽으므로 torn read 방지를 위해 ticks(Int64)로 보관.
+	// 두 시각 모두 RenewLoop 외의 스레드에서도 접근한다 (_expiredAtUtcTicks는
+	// AllocateIdCoreAsync의 임의 스레드, _renewAtUtcTicks는 셧다운 스레드의 RemoveAsync).
+	// torn read 방지와 가시성 보장을 위해 ticks(Int64) + Volatile로 통일해 다룬다.
+	private Int64 _renewAtUtcTicks = DateTime.MaxValue.Ticks;
 	private Int64 _expiredAtUtcTicks = DateTime.MaxValue.Ticks;
 
 	public SnowflakeHostedService(
@@ -47,8 +55,13 @@ public class SnowflakeHostedService : BackgroundService
 		_hostLifetime = hostLifetime;
 	}
 
+	// 슬롯 존재 여부와 리스 유효성을 함께 본다 — AllocateIdCoreAsync가 발급을 허용하는 조건과
+	// 동일해야 한다. 만료된 슬롯을 실제로 내리는 건 RenewLoop의 다음 주기이므로, 슬롯만 보면
+	// 최대 RenewLoopDuration 동안 헬스체크는 Healthy인데 모든 발급이 503이 되는 구간이 생긴다.
 	public Task<bool> IsReadyAsync(CancellationToken _)
-		=> Task.FromResult(Volatile.Read(ref _generatorSlots) is not null);
+		=> Task.FromResult(
+			Volatile.Read(ref _generatorSlots) is not null
+			&& DateTime.UtcNow.Ticks < Volatile.Read(ref _expiredAtUtcTicks));
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
@@ -161,14 +174,36 @@ public class SnowflakeHostedService : BackgroundService
 						.Select(r => new GeneratorSlot(new IdGenerator(r.Id, options)))
 						.ToArray();
 
-					Volatile.Write(
-						ref _expiredAtUtcTicks,
-						responseAlloc.Ids.Min(r => r.ExpiredAtUtc).UtcDateTime.Ticks);
-					// 의도된 동작: _renewAtUtc를 현재 시각으로 설정해 첫 RenewLoop 진입 시
+					DateTime utcNow = DateTime.UtcNow;
+					DateTime expiredAtUtc = responseAlloc.Ids.Min(r => r.ExpiredAtUtc).UtcDateTime;
+
+					// 방금 받은 리스가 로컬 시계 기준으로 이미 만료라면 두 시계의 괴리가 리스
+					// 길이를 넘어선 것이므로, 발급이 즉시 전량 차단되는 상태로 기동하지 않도록
+					// fail-fast 한다.
+					// 주의: 이 검사가 잡는 건 로컬 시계가 서버보다 '앞선' 방향뿐이다. 로컬이
+					// '뒤처진' 경우 (만료 - 로컬now)가 오히려 리스보다 커져 항상 통과한다.
+					// 뒤처진 방향이야말로 서버가 회수·재할당한 노드 ID를 계속 쓰게 되는 중복
+					// 발급 위험이지만, 이를 검출하려면 서버의 현재 시각이 필요하고 현재 Alloc/
+					// Renew 응답에는 포함되어 있지 않다. 지금은 만료 절반 시점 갱신이 제공하는
+					// 마진(리스의 1/2)에 의존한다.
+					if (expiredAtUtc <= utcNow)
+					{
+						_logger.LogCritical(
+							"Allocated lease is already expired by the local clock" +
+							" (expiredAtUtc={ExpiredAtUtc:O}, localUtcNow={UtcNow:O})." +
+							" Check clock synchronization. Stopping application.",
+							expiredAtUtc,
+							utcNow);
+						_hostLifetime.StopApplication();
+						return;
+					}
+
+					Volatile.Write(ref _expiredAtUtcTicks, expiredAtUtc.Ticks);
+					// 의도된 동작: 갱신 시점을 현재 시각으로 설정해 첫 RenewLoop 진입 시
 					// 즉시 Renew를 1회 수행한다. 시작 직후 갱신 경로가 정상인지 조기에
 					// 검증하고, 이후 갱신 시점은 RenewAsync가 만료 시각의 절반 지점으로
 					// 재계산한다.
-					_renewAtUtc = DateTime.UtcNow;
+					Volatile.Write(ref _renewAtUtcTicks, utcNow.Ticks);
 
 					Volatile.Write(ref _generatorSlots, slots);
 
@@ -349,7 +384,7 @@ public class SnowflakeHostedService : BackgroundService
 			Volatile.Write(ref _drainTcs, drainTcs);
 			Volatile.Write(ref _generatorSlots, null);
 			Volatile.Write(ref _expiredAtUtcTicks, DateTime.MaxValue.Ticks);
-			_renewAtUtc = DateTime.MaxValue;
+			Volatile.Write(ref _renewAtUtcTicks, DateTime.MaxValue.Ticks);
 
 			// 이미 슬롯을 캡처한 진행 중 AllocateIdAsync가 끝날 때까지 대기.
 			// 드레인 완료 후에야 서버로 노드 ID를 반납 — 유니크니스 보장.
@@ -417,25 +452,70 @@ public class SnowflakeHostedService : BackgroundService
 			RequestV1Renew requestRenew = new(MachineConstant.UniqueProcessId);
 			ResponseV1Renew? responseRenew =
 				await idKeeperApiClient.PostIdKeeperRenew(requestRenew, cancellationToken);
-			if (responseRenew is null || responseRenew.Ids.Count == 0)
+
+			// 전송 실패(네트워크 오류·타임아웃·5xx)이거나 Ids 필드 자체가 없는 비정상 응답.
+			// 어느 쪽도 "서버가 리스를 잃었다"는 근거가 아니므로 — 특히 Ids=null은 빈 목록과
+			// 달리 서버의 NotFound 신호가 아니라 응답 이상이므로 — 갱신 시점을 그대로 두고
+			// 반환해 다음 RenewLoop 주기에 재시도한다.
+			// (RenewLoop는 만료가 가까울수록 주기를 좁혀 재시도 횟수를 확보한다.)
+			if (responseRenew is null || responseRenew.Ids is null)
 			{
-				// 의도된 동작: 실패 시 _renewAtUtc를 갱신하지 않고 반환한다.
-				// _renewAtUtc가 과거에 머물러 다음 RenewLoop 주기마다 재시도하게 되며,
-				// 별도 백오프 없이 만료 전까지 RenewLoopDuration 간격으로 계속 시도한다.
-				_logger.LogWarning("Fail to renew. Check error logs.");
+				_logger.LogWarning("Fail to renew: no valid response from IdKeeper API. Will retry.");
 				return;
+			}
+
+			if (responseRenew.Ids.Count == 0)
+			{
+				// 서버의 200 + 빈 목록은 RenewResult.NotFound — "이 requester의 리스가 서버에
+				// 존재하지 않는다"는 확정 신호다. 서버는 이미 노드 ID를 회수해 다른 프로세스에
+				// 재할당할 수 있으므로, 로컬 만료 시각이 남아 있더라도 즉시 발급을 차단한다.
+				// 전송 실패(null)와 달리 재시도해도 되살아나지 않으므로 fail-fast 한다.
+				StopIssuing("Renew returned no ids: the lease no longer exists on the server.");
+				throw new SnowflakeRuntimeException(
+					"Renew returned no ids: the lease no longer exists on the server.");
 			}
 
 			_logger.LogInformation("ResponseRenew: {ResponseRenew}", responseRenew);
 
+			// 서버는 requester 단위로 보유한 노드 ID 전체를 함께 갱신하므로 개수가 어긋나면
+			// 로컬 슬롯 중 일부가 서버에서 사라졌다는 뜻이다. 어느 슬롯이 유효한지 특정할 수
+			// 없어 부분 사용은 중복 발급 위험이 있으므로 fail-fast 한다.
+			GeneratorSlot[]? slots = Volatile.Read(ref _generatorSlots);
+			if (slots is not null && responseRenew.Ids.Count != slots.Length)
+			{
+				string message = $"Renew id count mismatch: server={responseRenew.Ids.Count}," +
+					$" local slots={slots.Length}.";
+				StopIssuing(message);
+				throw new SnowflakeRuntimeException(message);
+			}
+
 			DateTime utcNow = DateTime.UtcNow;
 			DateTime expiredAtUtc = responseRenew.Ids.Min(r => r.ExpiredAtUtc).UtcDateTime;
+
+			// 방금 갱신한 리스가 로컬 시계 기준 이미 만료 — 두 시계의 괴리가 리스 길이를
+			// 넘어선 것이므로 InitializeAsync와 동일하게 fail-fast 한다.
+			// (로컬 시계가 앞선 방향만 검출된다. 자세한 한계는 InitializeAsync의 주석 참고.)
+			if (expiredAtUtc <= utcNow)
+			{
+				string message = $"Renewed lease is already expired by the local clock" +
+					$" (expiredAtUtc={expiredAtUtc:O}, localUtcNow={utcNow:O})." +
+					" Check clock synchronization.";
+				StopIssuing(message);
+				throw new SnowflakeRuntimeException(message);
+			}
+
 			Volatile.Write(ref _expiredAtUtcTicks, expiredAtUtc.Ticks);
-			_renewAtUtc = utcNow + (expiredAtUtc - utcNow) / 2;
+			Volatile.Write(ref _renewAtUtcTicks, (utcNow + (expiredAtUtc - utcNow) / 2).Ticks);
 		}
 		catch (OperationCanceledException)
 		{
 			// Ignore cancellation
+		}
+		catch (SnowflakeRuntimeException)
+		{
+			// 의도된 fail-fast 신호 — 아래 catch(Exception)에 삼켜지지 않도록 먼저 다시 던진다.
+			// RenewLoopAsync를 거쳐 ExecuteAsync까지 전파되어 호스트 종료로 이어진다.
+			throw;
 		}
 		catch (Exception ex)
 		{
@@ -450,6 +530,60 @@ public class SnowflakeHostedService : BackgroundService
 		}
 	}
 
+	/// <summary>
+	/// 리스가 더 이상 유효하지 않다고 판단됐을 때 즉시 발급을 차단한다.
+	/// 슬롯을 내리는 것만으로는 이미 슬롯을 캡처한 in-flight 발급을 막지 못하므로, 만료 시각도
+	/// 함께 과거로 돌려 AllocateIdCoreAsync의 사후 재검사가 결과를 버리게 한다.
+	/// 이후 RemoveAsync는 슬롯이 null이라 조기 반환하지만, 리스가 이미 무효하므로
+	/// 서버 반납은 불필요하다.
+	/// </summary>
+	private void StopIssuing(string reason)
+	{
+		Volatile.Write(ref _expiredAtUtcTicks, DateTime.UtcNow.Ticks);
+		Volatile.Write(ref _renewAtUtcTicks, DateTime.MaxValue.Ticks);
+		GeneratorSlot[]? slots = Interlocked.Exchange(ref _generatorSlots, null);
+
+		_logger.LogError(
+			"Snowflake id issuance stopped (generators={Count}): {Reason}",
+			slots?.Length,
+			reason);
+	}
+
+	/// <summary>
+	/// 다음 RenewLoop 주기까지의 대기 시간을 계산한다. 갱신이 밀린 상태(직전 갱신이 실패해
+	/// 갱신 시점이 과거에 머무는 경우 포함)에서는 만료까지 남은 시간에 비례해 간격을 좁혀
+	/// 최소 <see cref="MinRenewAttempts"/>회의 재시도를 확보한다. 고정 간격이면
+	/// RenewLoopDuration(기본 10분)이 리스 잔여 시간을 통째로 소진해 재시도가 한두 번에
+	/// 그칠 수 있다.
+	/// </summary>
+	private TimeSpan NextLoopDelay()
+	{
+		TimeSpan delay = _snowflakeSetting.RenewLoopDuration;
+
+		DateTime utcNow = DateTime.UtcNow;
+		DateTime renewAtUtc = new(Volatile.Read(ref _renewAtUtcTicks), DateTimeKind.Utc);
+		if (renewAtUtc > utcNow)
+		{
+			return delay;
+		}
+
+		DateTime expiredAtUtc = new(Volatile.Read(ref _expiredAtUtcTicks), DateTimeKind.Utc);
+		TimeSpan remaining = expiredAtUtc - utcNow;
+		if (remaining <= TimeSpan.Zero)
+		{
+			// 이미 만료 — 다음 주기에 만료 분기로 즉시 진입하도록 최소 간격만 대기한다.
+			return s_minLoopDelay;
+		}
+
+		TimeSpan retryDelay = remaining / MinRenewAttempts;
+		if (retryDelay < delay)
+		{
+			delay = retryDelay;
+		}
+
+		return delay < s_minLoopDelay ? s_minLoopDelay : delay;
+	}
+
 	private async Task RenewLoopAsync(CancellationToken cancellationToken)
 	{
 		while (!cancellationToken.IsCancellationRequested)
@@ -458,7 +592,8 @@ public class SnowflakeHostedService : BackgroundService
 			{
 				DateTime utcNow = DateTime.UtcNow;
 				DateTime expiredAtUtc = new(Volatile.Read(ref _expiredAtUtcTicks), DateTimeKind.Utc);
-				if (_renewAtUtc <= utcNow && utcNow < expiredAtUtc)
+				DateTime renewAtUtc = new(Volatile.Read(ref _renewAtUtcTicks), DateTimeKind.Utc);
+				if (renewAtUtc <= utcNow && utcNow < expiredAtUtc)
 				{
 					await RenewAsync(cancellationToken);
 				}
@@ -466,18 +601,13 @@ public class SnowflakeHostedService : BackgroundService
 				{
 					// 만료 즉시 슬롯을 내려 발급을 차단한다. 만료된 노드 ID는 서버가
 					// 다른 프로세스에 재할당할 수 있으므로, 셧다운이 완료될 때까지 발급을
-					// 계속하면 ID가 중복될 수 있다. 이후 RemoveAsync는 슬롯이 null이라
-					// 조기 반환하지만, 리스가 이미 만료됐으므로 서버 반납은 불필요하다.
-					GeneratorSlot[]? slots = Interlocked.Exchange(ref _generatorSlots, null);
-					_logger.LogError(
-						"Snowflake node id was expired. generators={Count}, expireAtUtc={ExpireAtUtc}",
-						slots?.Length,
-						expiredAtUtc);
+					// 계속하면 ID가 중복될 수 있다.
+					StopIssuing($"node id lease expired at {expiredAtUtc:O}");
 					throw new SnowflakeRuntimeException(
-						$"Snowflake node id was expired. expireAtUtc={expiredAtUtc}");
+						$"Snowflake node id was expired. expireAtUtc={expiredAtUtc:O}");
 				}
 
-				await Task.Delay(_snowflakeSetting.RenewLoopDuration, cancellationToken);
+				await Task.Delay(NextLoopDelay(), cancellationToken);
 			}
 			catch (OperationCanceledException)
 			{

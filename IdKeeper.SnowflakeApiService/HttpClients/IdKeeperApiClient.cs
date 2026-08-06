@@ -36,6 +36,52 @@ public class IdKeeperApiClient
 			XApiKeyConstant.XApiKeyHeaderName, apiKey);
 	}
 
+	/// <summary>
+	/// 공통 POST 경로. 실패 시 null을 반환해 호출자가 재시도를 판단하게 하되,
+	/// 호출자가 취소한 경우(셧다운 등)는 실패가 아니므로 그대로 전파한다.
+	/// </summary>
+	private async Task<TResponse?> PostAsync<TRequest, TResponse>(
+		string requestUri, TRequest request, string operation,
+		CancellationToken cancellationToken)
+		where TResponse : class
+	{
+		try
+		{
+			HttpResponseMessage response =
+				await _httpClient.PostAsJsonAsync(requestUri, request, cancellationToken);
+
+			response.EnsureSuccessStatusCode();
+
+			return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			// 호출자 토큰에 의한 취소는 오류가 아니다. 호출자(SnowflakeHostedService)가
+			// OperationCanceledException을 이미 처리하므로 로깅 없이 전파한다.
+			throw;
+		}
+		catch (TaskCanceledException ex)
+		{
+			// 호출자 토큰이 취소되지 않은 TaskCanceledException = HttpClient 타임아웃.
+			// 일시적 실패이므로 null을 반환해 호출자가 재시도하게 한다.
+			_logger.LogError(ex, "Timeout from IdKeeper API while {Operation}.", operation);
+			return null;
+		}
+		catch (HttpRequestException ex)
+		{
+			_logger.LogError(ex,
+				"HTTP error from IdKeeper API while {Operation}. StatusCode={StatusCode}",
+				operation,
+				ex.StatusCode);
+			return null;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Unexpected error from IdKeeper API while {Operation}.", operation);
+			return null;
+		}
+	}
+
 	public record IdRecord(Int32 Id, DateTimeOffset ExpiredAtUtc)
 	{
 		public override string ToString() => $"Id: {Id} ExpiredAtUtc: {ExpiredAtUtc:O}";
@@ -70,33 +116,10 @@ public class IdKeeperApiClient
 		}
 	}
 
-	public async Task<ResponseV1Alloc?> PostIdKeeperAlloc(RequestV1Alloc requestAlloc,
+	public Task<ResponseV1Alloc?> PostIdKeeperAlloc(RequestV1Alloc requestAlloc,
 		CancellationToken cancellationToken = default)
-	{
-		try
-		{
-			string requestUri = "v1/IdKeeper/Alloc";
-
-			HttpResponseMessage response =
-				await _httpClient.PostAsJsonAsync(requestUri, requestAlloc, cancellationToken);
-
-			response.EnsureSuccessStatusCode();
-
-			return await response.Content.ReadFromJsonAsync<ResponseV1Alloc>(cancellationToken);
-		}
-		catch (HttpRequestException ex)
-		{
-			_logger.LogError(ex,
-				"HTTP error from IdKeeper API while allocating IDs. StatusCode={StatusCode}",
-				ex.StatusCode);
-			return null;
-		}
-		catch (Exception ex)
-		{
-			_logger.LogError(ex, "Unexpected error while allocating node IDs from IdKeeper API.");
-			return null;
-		}
-	}
+		=> PostAsync<RequestV1Alloc, ResponseV1Alloc>(
+			"v1/IdKeeper/Alloc", requestAlloc, "allocating node ids", cancellationToken);
 
 	public record RequestV1Renew(string Requester);
 	public record ResponseV1Renew(List<IdRecord> Ids)
@@ -113,33 +136,12 @@ public class IdKeeperApiClient
 		}
 	}
 
-	public async Task<ResponseV1Renew?> PostIdKeeperRenew(RequestV1Renew requestRenew,
+	// 반환값 계약: null = 전송 실패(재시도 가능), Ids가 빈 목록 = 서버에 리스가 없음(확정).
+	// SnowflakeHostedService.RenewAsync가 이 둘을 다르게 처리한다.
+	public Task<ResponseV1Renew?> PostIdKeeperRenew(RequestV1Renew requestRenew,
 		CancellationToken cancellationToken = default)
-	{
-		try
-		{
-			string requestUri = "v1/IdKeeper/Renew";
-
-			HttpResponseMessage response =
-				await _httpClient.PostAsJsonAsync(requestUri, requestRenew, cancellationToken);
-
-			response.EnsureSuccessStatusCode();
-
-			return await response.Content.ReadFromJsonAsync<ResponseV1Renew>(cancellationToken);
-		}
-		catch (HttpRequestException ex)
-		{
-			_logger.LogError(ex,
-				"HTTP error from IdKeeper API while renewing IDs. StatusCode={StatusCode}",
-				ex.StatusCode);
-			return null;
-		}
-		catch (Exception ex)
-		{
-			_logger.LogError(ex, "Unexpected error while renewing node IDs from IdKeeper API.");
-			return null;
-		}
-	}
+		=> PostAsync<RequestV1Renew, ResponseV1Renew>(
+			"v1/IdKeeper/Renew", requestRenew, "renewing node ids", cancellationToken);
 
 	public record RequestV1Remove(string Requester);
 	public record ResponseV1Remove(List<Int32> Ids)
@@ -156,31 +158,8 @@ public class IdKeeperApiClient
 		}
 	}
 
-	public async Task<ResponseV1Remove?> PostIdKeeperRemove(RequestV1Remove requestRemove,
+	public Task<ResponseV1Remove?> PostIdKeeperRemove(RequestV1Remove requestRemove,
 		CancellationToken cancellationToken = default)
-	{
-		try
-		{
-			string requestUri = "v1/IdKeeper/Remove";
-
-			HttpResponseMessage response =
-				await _httpClient.PostAsJsonAsync(requestUri, requestRemove, cancellationToken);
-
-			response.EnsureSuccessStatusCode();
-
-			return await response.Content.ReadFromJsonAsync<ResponseV1Remove>(cancellationToken);
-		}
-		catch (HttpRequestException ex)
-		{
-			_logger.LogError(ex,
-				"HTTP error from IdKeeper API while removing IDs. StatusCode={StatusCode}",
-				ex.StatusCode);
-			return null;
-		}
-		catch (Exception ex)
-		{
-			_logger.LogError(ex, "Unexpected error while removing node IDs from IdKeeper API.");
-			return null;
-		}
-	}
+		=> PostAsync<RequestV1Remove, ResponseV1Remove>(
+			"v1/IdKeeper/Remove", requestRemove, "removing node ids", cancellationToken);
 }
