@@ -87,12 +87,12 @@ docker compose up -d
   - Step 1)
     - Application 최초 요청 (Alloc)
       - X-API 키
-      - MachineId + PID (각 OS 혹은 Docker container마다 MachineId를 가져올 수 있다.)
+      - MachineId + PID + 프로세스 시작 시각 (각 OS 혹은 Docker container마다 MachineId를 가져올 수 있다. 시작 시각까지 포함해야 컨테이너에서 PID가 1로 고정되어도 재시작한 프로세스가 서로 구분된다.)
       - 필요한 Id 개수
     - 서버 처리
       - X-API 키가 일치하는지 확인한다.
       - 필요한 Id 개수만큼 할당 가능한지 확인한다.
-      - 할당한 Id마다 Requester에 MachineId + PID를 등록한다.
+      - 할당한 Id마다 Requester에 MachineId + PID + 프로세스 시작 시각을 등록한다.
       - 최초 임대 기간(Lease duration)은 10분으로 설정한다. (Renew시 임대 기간은 기본값으로 설정)
       - 같은 Requester가 이미 Id를 보유 중이면 멱등 처리한다. 요청 개수가 보유 개수와 같으면 기존 Id 목록을 그대로 반환하고 임대만 최초 만료 시간으로 갱신하며, 개수가 다르면 실패로 처리한다.
         - 응답이 유실되어(타임아웃 등) 클라이언트가 재시도한 경우를 복구하기 위함이다. Requester가 MachineId + PID + 프로세스 시작 시각이라 프로세스 단위로 유일하므로, 같은 Requester는 같은 프로세스임이 보장된다.
