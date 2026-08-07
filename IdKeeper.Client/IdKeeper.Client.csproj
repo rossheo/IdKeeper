@@ -22,6 +22,7 @@
 		<PackageTags>snowflake;id;idgen;distributed-id;idkeeper</PackageTags>
 		<PackageLicenseFile>license.md</PackageLicenseFile>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageIcon>icon.png</PackageIcon>
 		<PackageProjectUrl>https://github.com/rossheo/IdKeeper</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/rossheo/IdKeeper</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
@@ -30,6 +31,7 @@
 
 	<ItemGroup>
 		<None Include="..\license.md" Pack="true" PackagePath="\" />
+		<None Include="..\icon.png" Pack="true" PackagePath="\" Visible="false" />
 		<None Include="README.md" Pack="true" PackagePath="\" />
 	</ItemGroup>
 
