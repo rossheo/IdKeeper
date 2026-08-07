@@ -1,5 +1,5 @@
-using Asp.Versioning;
-using IdKeeper.SnowflakeApiService.HostedServices;
+﻿using Asp.Versioning;
+using IdKeeper.Client;
 using IdKeeper.SnowflakeApiService.Requests;
 using IdKeeper.SnowflakeApiService.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -16,14 +16,14 @@ namespace IdKeeper.SnowflakeApiService.Controllers;
 public class SnowflakeIdControllerAlloc : ControllerBase
 {
 	private readonly ILogger _logger;
-	private readonly SnowflakeHostedService _snowflakeHostedService;
+	private readonly ISnowflakeIdGenerator _idGenerator;
 
 	public SnowflakeIdControllerAlloc(
 		ILogger<SnowflakeIdControllerAlloc> logger,
-		SnowflakeHostedService snowflakeHostedService)
+		ISnowflakeIdGenerator idGenerator)
 	{
 		_logger = logger;
-		_snowflakeHostedService = snowflakeHostedService;
+		_idGenerator = idGenerator;
 	}
 
 	[HttpPost("Alloc")]
@@ -32,22 +32,20 @@ public class SnowflakeIdControllerAlloc : ControllerBase
 		[FromBody] SnowflakeIdRequestV1Alloc request,
 		CancellationToken cancellationToken = default)
 	{
-		if (!await _snowflakeHostedService.IsReadyAsync(cancellationToken))
+		try
 		{
-			return StatusCode(
-				StatusCodes.Status503ServiceUnavailable,
-				"Snowflake service is not yet initialized.");
+			IReadOnlyList<Int64> ids =
+				await _idGenerator.NextIdsAsync(request.Count, cancellationToken);
+			return Ok(new SnowflakeIdResponseV1Alloc { Ids = ids });
 		}
-
-		IReadOnlyList<Int64> ids =
-			await _snowflakeHostedService.AllocateIdAsync(request.Count, cancellationToken);
-		if (ids.Count == 0)
+		catch (SnowflakeNotReadyException ex)
 		{
+			// 아직 임대를 받지 못했거나(기동 직후) 만료되어 발급이 차단된 상태.
+			// 라이브러리는 예외로 알리지만 HTTP로는 503이 적절하다.
+			_logger.LogWarning(ex, "Snowflake id generator is not ready.");
 			return StatusCode(
 				StatusCodes.Status503ServiceUnavailable,
 				"Snowflake service is unavailable.");
 		}
-
-		return Ok(new SnowflakeIdResponseV1Alloc { Ids = ids });
 	}
 }

@@ -22,6 +22,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<ProjectReference Include="..\IdKeeper.Client\IdKeeper.Client.csproj" />
 		<ProjectReference Include="..\IdKeeper.Common\IdKeeper.Common.csproj" />
 		<ProjectReference Include="..\IdKeeper.ServiceDefaults\IdKeeper.ServiceDefaults.csproj" />
 	</ItemGroup>

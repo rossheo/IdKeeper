@@ -1,13 +1,9 @@
 using Asp.Versioning;
 using Asp.Versioning.ApiExplorer;
+using IdKeeper.Client;
 using IdKeeper.Common.Constants;
 using IdKeeper.Common.Exceptions;
-using IdKeeper.Common.Extensions;
 using IdKeeper.SnowflakeApiService.Formatters;
-using IdKeeper.SnowflakeApiService.HealthChecks;
-using IdKeeper.SnowflakeApiService.HostedServices;
-using IdKeeper.SnowflakeApiService.HttpClients;
-using IdKeeper.SnowflakeApiService.Settings;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -24,9 +20,31 @@ builder.Services.AddProblemDetails(configure =>
 });
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
-builder.Services.AddSetting<SnowflakeSetting>(options =>
+// 임대 생명주기 전체를 IdKeeper.Client가 담당한다. 이 서비스는 그 위의 HTTP 게이트웨이다.
+// 설정은 "SnowflakeSetting" 섹션에서 읽고, 배포 환경의 환경변수가 그 위를 덮는다.
+builder.Services.AddIdKeeperSnowflake(options =>
 {
-	options.ApplyEnvironmentVariables(builder.Configuration);
+	builder.Configuration.GetSection("SnowflakeSetting").Bind(options);
+
+	string? baseAddress = builder.Configuration["IDKEEPER_BASEADDRESS"]
+		?? builder.Configuration["services:apiservice:http:0"];
+	if (!string.IsNullOrWhiteSpace(baseAddress))
+	{
+		options.BaseAddress = new Uri(baseAddress);
+	}
+
+	string? apiKey = builder.Configuration["IDKEEPER_APIKEY"];
+	if (!string.IsNullOrWhiteSpace(apiKey))
+	{
+		options.ApiKey = apiKey;
+	}
+
+	string? generatorCount = builder.Configuration["IDKEEPER_GENERATOR_COUNT"];
+	if (!string.IsNullOrWhiteSpace(generatorCount)
+		&& Int32.TryParse(generatorCount, out Int32 parsedCount))
+	{
+		options.GeneratorCount = parsedCount;
+	}
 });
 
 builder.Services.AddControllers(options =>
@@ -50,17 +68,9 @@ builder.Services.AddApiVersioning(options =>
 	options.SubstituteApiVersionInUrl = true;
 });
 
-builder.Services.AddHttpClient<IdKeeperApiClient>(httpClient =>
-{
-	httpClient.BaseAddress = new("http://apiservice");
-});
-
-builder.Services.AddSingleton<SnowflakeHostedService>();
-builder.Services.AddHostedService(serviceProvider =>
-	serviceProvider.GetRequiredService<SnowflakeHostedService>());
-
+// 헬스체크 이름을 유지한다 — Aspire AppHost가 /health로 기동 순서를 게이팅한다.
 builder.Services.AddHealthChecks()
-	.AddCheck<SnowflakeInitHealthCheck>("snowflake-init");
+	.AddIdKeeperSnowflake("snowflake-init");
 
 if (builder.Environment.IsDevelopment())
 {
@@ -79,7 +89,8 @@ if (builder.Environment.IsDevelopment())
 
 WebApplication app = builder.Build();
 VersionConstant.Logging(app.Logger);
-MachineConstant.Logging(app.Logger);
+// 실제 requester와 로그가 어긋나지 않도록 라이브러리가 산출한 식별자를 남긴다.
+app.Logger.LogInformation("Requester: {Requester}", SnowflakeClientIdentity.Current);
 
 if (app.Environment.IsDevelopment())
 {

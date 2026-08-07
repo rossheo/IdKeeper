@@ -8,6 +8,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" />
 		<PackageReference Include="xunit" />
 		<PackageReference Include="xunit.runner.visualstudio">
@@ -17,8 +18,9 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference
-			Include="..\IdKeeper.SnowflakeApiService\IdKeeper.SnowflakeApiService.csproj" />
+		<ProjectReference Include="..\IdKeeper.Client\IdKeeper.Client.csproj" />
+		<!-- SnowflakeLayoutTests는 IdKeeper.Common의 레이아웃 타입만 검증한다. -->
+		<ProjectReference Include="..\IdKeeper.Common\IdKeeper.Common.csproj" />
 	</ItemGroup>
 
 </Project>

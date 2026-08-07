@@ -1,9 +1,8 @@
-using IdKeeper.SnowflakeApiService.HostedServices;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
+﻿using Microsoft.Extensions.Diagnostics.HealthChecks;
 
-namespace IdKeeper.SnowflakeApiService.HealthChecks;
+namespace IdKeeper.Client.HealthChecks;
 
-public sealed class SnowflakeInitHealthCheck : IHealthCheck
+internal sealed class SnowflakeInitHealthCheck : IHealthCheck
 {
 	private readonly SnowflakeHostedService _snowflakeHostedService;
 

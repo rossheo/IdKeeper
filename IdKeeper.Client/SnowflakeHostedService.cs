@@ -1,13 +1,12 @@
-using IdGen;
-using IdKeeper.Common.Constants;
-using IdKeeper.SnowflakeApiService.Exceptions;
-using IdKeeper.SnowflakeApiService.HttpClients;
-using IdKeeper.SnowflakeApiService.Settings;
-using static IdKeeper.SnowflakeApiService.HttpClients.IdKeeperApiClient;
+﻿using IdGen;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using static IdKeeper.Client.IdKeeperApiClient;
 
-namespace IdKeeper.SnowflakeApiService.HostedServices;
+namespace IdKeeper.Client;
 
-public class SnowflakeHostedService : BackgroundService
+internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 {
 	private sealed class GeneratorSlot(IdGenerator generator)
 	{
@@ -15,9 +14,8 @@ public class SnowflakeHostedService : BackgroundService
 		public SemaphoreSlim Lock { get; } = new(1, 1);
 	}
 
-	// 한 번에 발급 가능한 최대 ID 수. 컨트롤러 DTO(SnowflakeIdRequestV1Alloc)의
-	// Range 상한과 공유한다.
-	public const Int32 MaxAllocateCount = 10_000;
+	// 한 번에 발급 가능한 최대 ID 수. 호출부의 입력 검증과 공유하기 위해 공개 상수로 노출한다.
+	public const Int32 MaxAllocateCount = SnowflakeIdLimits.MaxAllocateCount;
 
 	// 갱신 재시도 간격이 아무리 좁혀져도 이보다 짧아지지 않는다 (busy loop 방지).
 	private static readonly TimeSpan s_minLoopDelay = TimeSpan.FromSeconds(5);
@@ -30,9 +28,15 @@ public class SnowflakeHostedService : BackgroundService
 	// 갱신이 밀린 상태에서 만료까지 남은 시간을 이 횟수로 나눠 재시도 간격을 정한다.
 	private const Int32 MinRenewAttempts = 4;
 
+	// 한 프로세스에 발급기가 둘 이상 기동하는 것을 막는 전역 가드. DI 등록은
+	// AddIdKeeperSnowflake가 멱등하게 막지만, 한 프로세스에 호스트를 둘 띄우면 컨테이너가
+	// 달라 DI로는 막을 수 없다. 그 경우 같은 requester로 Alloc이 두 번 일어나고 멱등 동작 탓에
+	// 동일한 노드 Id를 받아 ID가 중복되므로, 기동 시점에 실패시킨다.
+	private static Int32 s_runningInstanceCount;
+
 	private readonly ILogger _logger;
 	private readonly IServiceScopeFactory _scopeFactory;
-	private readonly SnowflakeSetting _snowflakeSetting;
+	private readonly SnowflakeClientOptions _options;
 	private readonly IHostApplicationLifetime _hostLifetime;
 
 	// _initLock: InitializeAsync / RenewAsync / RemoveAsync 만 취득.
@@ -51,13 +55,41 @@ public class SnowflakeHostedService : BackgroundService
 	public SnowflakeHostedService(
 		ILogger<SnowflakeHostedService> logger,
 		IServiceScopeFactory scopeFactory,
-		SnowflakeSetting snowflakeSetting,
+		SnowflakeClientOptions options,
 		IHostApplicationLifetime hostLifetime)
 	{
 		_logger = logger;
 		_scopeFactory = scopeFactory;
-		_snowflakeSetting = snowflakeSetting;
+		_options = options;
 		_hostLifetime = hostLifetime;
+
+		// requester는 프로세스 인스턴스마다 유일해야 한다 — SnowflakeClientOptions.Requester 주석 참고.
+		_requester = string.IsNullOrWhiteSpace(options.Requester)
+			? SnowflakeClientIdentity.Current
+			: options.Requester;
+	}
+
+	private readonly string _requester;
+
+	/// <summary>이 프로세스가 서버에 자신을 식별시키는 값. 진단 로깅용으로 노출한다.</summary>
+	public string Requester => _requester;
+
+	private bool _started;
+
+	public override Task StartAsync(CancellationToken cancellationToken)
+	{
+		if (Interlocked.Increment(ref s_runningInstanceCount) > 1)
+		{
+			Interlocked.Decrement(ref s_runningInstanceCount);
+			throw new InvalidOperationException(
+				"IdKeeper Snowflake client is already running in this process." +
+				" Only one instance is allowed — two generator sets would receive the same node ids" +
+				" (Alloc is idempotent per requester) and emit duplicate Snowflake ids." +
+				" Call AddIdKeeperSnowflake() once, and do not build a second host in the same process.");
+		}
+
+		_started = true;
+		return base.StartAsync(cancellationToken);
 	}
 
 	// 슬롯 존재 여부와 리스 유효성을 함께 본다 — AllocateIdCoreAsync가 발급을 허용하는 조건과
@@ -134,9 +166,9 @@ public class SnowflakeHostedService : BackgroundService
 				IdKeeperApiClient idKeeperApiClient =
 					scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
 
-				Int32 requestCount = _snowflakeSetting.GeneratorCount;
+				Int32 requestCount = _options.GeneratorCount;
 				RequestV1Alloc requestAlloc = new(
-					Count: requestCount, MachineConstant.UniqueProcessId, DateTimeOffset.UtcNow);
+					Count: requestCount, _requester, DateTimeOffset.UtcNow);
 				ResponseV1Alloc? responseAlloc =
 					await idKeeperApiClient.PostIdKeeperAlloc(requestAlloc, cancellationToken);
 
@@ -279,6 +311,74 @@ public class SnowflakeHostedService : BackgroundService
 		await base.StopAsync(cancellationToken);
 		await RemoveAsync(CancellationToken.None);
 	}
+
+	// ── ISnowflakeIdGenerator (소비자 표면) ───────────────────────────────────────
+
+	/// <inheritdoc />
+	public bool IsReady
+		=> Volatile.Read(ref _generatorSlots) is not null
+			&& DateTime.UtcNow.Ticks < Volatile.Read(ref _expiredAtUtcTicks);
+
+	/// <inheritdoc />
+	public Int64 NextId()
+	{
+		GeneratorSlot[] slots = RequireReadySlots();
+
+		// count=1은 슬롯 락을 잡지 않는다. IdGen.IdGenerator는 자체적으로 스레드 안전이고
+		// (내부 lock), 이 경로는 다음 밀리초를 기다릴 일이 사실상 없어 비동기 대기로 바꿔
+		// 얻을 이득이 없다. 세마포어는 대량 배치가 락을 오래 쥘 때 대기자가 스레드풀 스레드를
+		// 반납하도록 하는 용도라 여기서는 불필요하다.
+		Int32 n = slots.Length;
+		Int32 index = (Int32)((UInt32)Interlocked.Increment(ref _nextSlot) % (UInt32)n);
+		Int64 id = slots[index].Generator.CreateId();
+
+		// Take가 다음 밀리초를 기다리는 사이 리스가 만료됐을 수 있다 — 이미 만료된 노드 Id로
+		// 만든 값은 다른 프로세스와 겹칠 수 있으므로 버린다.
+		EnsureStillValid();
+		return id;
+	}
+
+	/// <inheritdoc />
+	public IReadOnlyList<Int64> NextIds(Int32 count)
+		=> NextIdsAsync(count).GetAwaiter().GetResult();
+
+	/// <inheritdoc />
+	public async Task<IReadOnlyList<Int64>> NextIdsAsync(
+		Int32 count, CancellationToken cancellationToken = default)
+	{
+		IReadOnlyList<Int64> ids = await AllocateIdAsync(count, cancellationToken);
+		if (ids.Count == 0)
+		{
+			throw NotReady();
+		}
+		return ids;
+	}
+
+	private GeneratorSlot[] RequireReadySlots()
+	{
+		GeneratorSlot[]? slots = Volatile.Read(ref _generatorSlots);
+		if (slots is null || slots.Length == 0)
+		{
+			throw NotReady();
+		}
+
+		EnsureStillValid();
+		return slots;
+	}
+
+	private void EnsureStillValid()
+	{
+		if (Volatile.Read(ref _expiredAtUtcTicks) <= DateTime.UtcNow.Ticks)
+		{
+			throw NotReady();
+		}
+	}
+
+	private static SnowflakeNotReadyException NotReady()
+		=> new("IdKeeper Snowflake client is not ready: the node id lease has not been acquired yet," +
+			" or it has expired and id issuance is blocked.");
+
+	// ── 내부 구현 ────────────────────────────────────────────────────────────────
 
 	public async Task<IReadOnlyList<Int64>> AllocateIdAsync(Int32 count, CancellationToken cancellationToken)
 	{
@@ -432,7 +532,7 @@ public class SnowflakeHostedService : BackgroundService
 			IdKeeperApiClient idKeeperApiClient =
 				scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
 
-			RequestV1Remove requestRemove = new(MachineConstant.UniqueProcessId);
+			RequestV1Remove requestRemove = new(_requester);
 			ResponseV1Remove? responseRemove =
 				await idKeeperApiClient.PostIdKeeperRemove(requestRemove, cancellationToken);
 			if (responseRemove is null)
@@ -480,7 +580,7 @@ public class SnowflakeHostedService : BackgroundService
 			IdKeeperApiClient idKeeperApiClient =
 				scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
 
-			RequestV1Renew requestRenew = new(MachineConstant.UniqueProcessId, DateTimeOffset.UtcNow);
+			RequestV1Renew requestRenew = new(_requester, DateTimeOffset.UtcNow);
 			ResponseV1Renew? responseRenew =
 				await idKeeperApiClient.PostIdKeeperRenew(requestRenew, cancellationToken);
 
@@ -590,7 +690,7 @@ public class SnowflakeHostedService : BackgroundService
 	/// </summary>
 	private TimeSpan NextLoopDelay()
 	{
-		TimeSpan delay = _snowflakeSetting.RenewLoopDuration;
+		TimeSpan delay = _options.RenewLoopDuration;
 
 		DateTime utcNow = DateTime.UtcNow;
 		DateTime renewAtUtc = new(Volatile.Read(ref _renewAtUtcTicks), DateTimeKind.Utc);
@@ -661,6 +761,14 @@ public class SnowflakeHostedService : BackgroundService
 
 	public override void Dispose()
 	{
+		// StartAsync에서 올린 전역 인스턴스 카운터를 되돌린다. 테스트처럼 StartAsync 없이
+		// 생성만 한 경우에는 올린 적이 없으므로 음수가 되지 않게 확인 후 내린다.
+		if (_started)
+		{
+			_started = false;
+			Interlocked.Decrement(ref s_runningInstanceCount);
+		}
+
 		// 슬롯 락(SemaphoreSlim)은 dispose하지 않는다 — RemoveAsync의 drain이 끝나기
 		// 전에 여기가 먼저 실행되면(예: StopAsync 타임아웃) 아직 락 대기 중인
 		// TakeFromSlotAsync의 Release()가 ObjectDisposedException을 던질 수 있다.

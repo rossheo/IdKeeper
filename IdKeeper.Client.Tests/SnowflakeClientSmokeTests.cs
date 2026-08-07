@@ -1,19 +1,15 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
 using IdGen;
 using Xunit;
-using IdKeeper.SnowflakeApiService.Exceptions;
-using IdKeeper.SnowflakeApiService.HostedServices;
-using IdKeeper.SnowflakeApiService.HttpClients;
-using IdKeeper.SnowflakeApiService.Settings;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace IdKeeper.SnowflakeApiService.Tests;
+namespace IdKeeper.Client.Tests;
 
-public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
+public sealed class SnowflakeClientSmokeTests : IDisposable
 {
 	// IdStructure(41, 10, 12): nodeId = (id >> 12) & 0x3FF
 	private const Int32 NodeIdShift = 12;
@@ -64,9 +60,14 @@ public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
 	private readonly ServiceProvider _serviceProvider;
 	private readonly FakeHttpHandler _fakeHandler = new();
 
-	public SnowflakeHostedServiceSmokeTests()
+	public SnowflakeClientSmokeTests()
 	{
-		SnowflakeSetting setting = new() { IdKeeperApiKey = "test-key", GeneratorCount = 3 };
+		SnowflakeClientOptions setting = new()
+		{
+			ApiKey = "idkeeper-test-key",
+			BaseAddress = new Uri("http://test/"),
+			GeneratorCount = 3,
+		};
 		HttpClient httpClient = new(_fakeHandler) { BaseAddress = new Uri("http://test/") };
 		IdKeeperApiClient apiClient = new(
 			NullLogger<IdKeeperApiClient>.Instance, httpClient, setting);

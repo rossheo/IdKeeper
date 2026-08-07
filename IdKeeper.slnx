@@ -7,11 +7,12 @@
   </Folder>
   <Project Path="IdKeeper.ApiService/IdKeeper.ApiService.csproj" />
   <Project Path="IdKeeper.AppHost/IdKeeper.AppHost.csproj" />
+  <Project Path="IdKeeper.Client/IdKeeper.Client.csproj" />
   <Project Path="IdKeeper.Common/IdKeeper.Common.csproj" />
   <Project Path="IdKeeper.RedisBackupTool/IdKeeper.RedisBackupTool.csproj" />
   <Project Path="IdKeeper.RedisCommon/IdKeeper.Database.Redis.csproj" />
   <Project Path="IdKeeper.ServiceDefaults/IdKeeper.ServiceDefaults.csproj" />
   <Project Path="IdKeeper.SnowflakeApiService/IdKeeper.SnowflakeApiService.csproj" />
-  <Project Path="IdKeeper.SnowflakeApiService.Tests/IdKeeper.SnowflakeApiService.Tests.csproj" />
+  <Project Path="IdKeeper.Client.Tests/IdKeeper.Client.Tests.csproj" />
   <Project Path="IdKeeper.Web/IdKeeper.Web.csproj" />
 </Solution>

@@ -1,33 +1,33 @@
-using IdKeeper.Common.Constants;
-using IdKeeper.SnowflakeApiService.Settings;
+﻿using Microsoft.Extensions.Logging;
+using System.Net.Http.Json;
 
-namespace IdKeeper.SnowflakeApiService.HttpClients;
+namespace IdKeeper.Client;
 
-public class IdKeeperApiClient
+internal class IdKeeperApiClient
 {
 	private readonly ILogger _logger;
 	private readonly HttpClient _httpClient;
-	private readonly SnowflakeSetting _snowflakeSetting;
+	private readonly SnowflakeClientOptions _options;
 
 	public IdKeeperApiClient(
 		ILogger<IdKeeperApiClient> logger,
 		HttpClient httpClient,
-		SnowflakeSetting snowflakeSetting)
+		SnowflakeClientOptions options)
 	{
 		_logger = logger;
 		_httpClient = httpClient;
-		_snowflakeSetting = snowflakeSetting;
+		_options = options;
 
 		EnsureApiKeyHeader();
 	}
 
 	private void EnsureApiKeyHeader()
 	{
-		string? apiKey = _snowflakeSetting.IdKeeperApiKey;
+		string? apiKey = _options.ApiKey;
 
 		if (string.IsNullOrWhiteSpace(apiKey))
 		{
-			_logger.LogWarning("IdKeeperApiKey is null or empty." +
+			_logger.LogWarning("ApiKey is null or empty." +
 				" API requests may fail due to missing authentication header.");
 			return;
 		}

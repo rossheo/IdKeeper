@@ -1,7 +1,7 @@
-using IdKeeper.Common.Constants;
+﻿using IdKeeper.Common.Constants;
 using Xunit;
 
-namespace IdKeeper.SnowflakeApiService.Tests;
+namespace IdKeeper.Client.Tests;
 
 public sealed class SnowflakeLayoutTests
 {
