@@ -54,14 +54,16 @@ internal class IdKeeperApiClient
 		try
 		{
 			HttpResponseMessage response =
-				await _httpClient.PostAsJsonAsync(requestUri, request, cancellationToken);
+				await _httpClient.PostAsJsonAsync(requestUri, request, cancellationToken)
+					.ConfigureAwait(false);
 
 			if (!response.IsSuccessStatusCode)
 			{
 				// EnsureSuccessStatusCode가 던지는 HttpRequestException에는 응답 본문이 실리지
 				// 않는다. 서버는 거부 사유를 본문에 담아 보내므로(예: 시계 오차 초과 409),
 				// 상태 코드만으로는 원인을 알 수 없어 여기서 직접 읽어 로깅한다.
-				string body = await response.Content.ReadAsStringAsync(cancellationToken);
+				string body = await response.Content.ReadAsStringAsync(cancellationToken)
+					.ConfigureAwait(false);
 				_logger.LogError(
 					"HTTP error from IdKeeper API while {Operation}. StatusCode={StatusCode} Body={Body}",
 					operation,
@@ -70,7 +72,8 @@ internal class IdKeeperApiClient
 				return null;
 			}
 
-			return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken);
+			return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken)
+				.ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{

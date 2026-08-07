@@ -102,7 +102,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
-		await InitializeAsync(stoppingToken);
+		await InitializeAsync(stoppingToken).ConfigureAwait(false);
 		if (stoppingToken.IsCancellationRequested)
 		{
 			return;
@@ -110,12 +110,32 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 
 		try
 		{
-			await RenewLoopAsync(stoppingToken);
+			await RenewLoopAsync(stoppingToken).ConfigureAwait(false);
 		}
 		catch (SnowflakeRuntimeException ex)
 		{
 			_logger.LogCritical(ex, "Unhandled exception in Snowflake renew loop; stopping application.");
 			_hostLifetime.StopApplication();
+		}
+	}
+
+	/// <summary>
+	/// 스코프를 열어 API 클라이언트를 해석하고 호출한 뒤 스코프를 닫는다.
+	///
+	/// <c>await using</c> 선언형(<c>await using AsyncServiceScope scope = ...</c>)에는
+	/// <c>ConfigureAwait(false)</c>를 붙일 수 없다 — 붙이면 타입이 ConfiguredAsyncDisposable이
+	/// 되어 <c>scope.ServiceProvider</c> 접근이 사라진다. 블록형으로 감싸면 되지만 호출부
+	/// 세 곳을 모두 들여쓰게 되므로, 공통 부분을 여기로 모아 한 번만 처리한다.
+	/// </summary>
+	private async Task<TResponse?> CallApiAsync<TResponse>(
+		Func<IdKeeperApiClient, Task<TResponse?>> call) where TResponse : class
+	{
+		AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
+		await using (scope.ConfigureAwait(false))
+		{
+			IdKeeperApiClient idKeeperApiClient =
+				scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
+			return await call(idKeeperApiClient).ConfigureAwait(false);
 		}
 	}
 
@@ -154,7 +174,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 			bool acquired = false;
 			try
 			{
-				await _initLock.WaitAsync(cancellationToken);
+				await _initLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 				acquired = true;
 
 				if (_generatorSlots is not null)
@@ -162,15 +182,12 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 					return;
 				}
 
-				await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
-				IdKeeperApiClient idKeeperApiClient =
-					scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
-
 				Int32 requestCount = _options.GeneratorCount;
 				RequestV1Alloc requestAlloc = new(
 					Count: requestCount, _requester, DateTimeOffset.UtcNow);
-				ResponseV1Alloc? responseAlloc =
-					await idKeeperApiClient.PostIdKeeperAlloc(requestAlloc, cancellationToken);
+				ResponseV1Alloc? responseAlloc = await CallApiAsync(
+					client => client.PostIdKeeperAlloc(requestAlloc, cancellationToken))
+					.ConfigureAwait(false);
 
 				if (responseAlloc is null || responseAlloc.Ids.Count == 0)
 				{
@@ -296,7 +313,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 
 			try
 			{
-				await Task.Delay(retryDelay, cancellationToken);
+				await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException)
 			{
@@ -308,8 +325,8 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 	public override async Task StopAsync(CancellationToken cancellationToken)
 	{
 		_logger.LogInformation("Stop SnowflakeHostedService.");
-		await base.StopAsync(cancellationToken);
-		await RemoveAsync(CancellationToken.None);
+		await base.StopAsync(cancellationToken).ConfigureAwait(false);
+		await RemoveAsync(CancellationToken.None).ConfigureAwait(false);
 	}
 
 	// ── ISnowflakeIdGenerator (소비자 표면) ───────────────────────────────────────
@@ -342,7 +359,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 	public async Task<IReadOnlyList<Int64>> NextIdsAsync(
 		Int32 count, CancellationToken cancellationToken = default)
 	{
-		IReadOnlyList<Int64> ids = await AllocateIdAsync(count, cancellationToken);
+		IReadOnlyList<Int64> ids = await AllocateIdAsync(count, cancellationToken).ConfigureAwait(false);
 		if (ids.Count == 0)
 		{
 			throw NotReady();
@@ -387,7 +404,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 		Interlocked.Increment(ref _allocatingCount);
 		try
 		{
-			return await AllocateIdCoreAsync(count, cancellationToken);
+			return await AllocateIdCoreAsync(count, cancellationToken).ConfigureAwait(false);
 		}
 		finally
 		{
@@ -423,7 +440,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 		Int64[] result;
 		if (genCount == 1)
 		{
-			result = await TakeFromSlotAsync(slots[start], count, cancellationToken);
+			result = await TakeFromSlotAsync(slots[start], count, cancellationToken).ConfigureAwait(false);
 		}
 		else
 		{
@@ -450,7 +467,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 
 			// Task.WhenAll은 모든 task가 완료된 뒤에 예외를 던진다.
 			// 일부 청크가 실패하면 전체를 실패 처리하고, 이미 소비된 ID는 gap으로 버린다.
-			Int64[][] chunks = await Task.WhenAll(tasks);
+			Int64[][] chunks = await Task.WhenAll(tasks).ConfigureAwait(false);
 
 			// 청크 합계는 정확히 count이므로 미리 크기를 잡아 재할당 없이 병합한다.
 			result = new Int64[count];
@@ -481,7 +498,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 	{
 		// 취소 토큰은 락 대기에만 적용되고 락 획득 후 Take(count)는 취소되지 않는다.
 		// 청크 크기가 MaxAllocateCount로 제한되어 ms 단위에 끝나므로 실질 영향은 없다.
-		await slot.Lock.WaitAsync(cancellationToken);
+		await slot.Lock.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
 			return slot.Generator.Take(count).ToArray();
@@ -497,7 +514,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 		bool acquired = false;
 		try
 		{
-			await _initLock.WaitAsync(cancellationToken);
+			await _initLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 			acquired = true;
 
 			if (_generatorSlots is null)
@@ -517,20 +534,17 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 			// 드레인 완료 후에야 서버로 노드 ID를 반납 — 유니크니스 보장.
 			if (Volatile.Read(ref _allocatingCount) == 0)
 				drainTcs.TrySetResult();
-			await drainTcs.Task;
+			await drainTcs.Task.ConfigureAwait(false);
 			Volatile.Write(ref _drainTcs, null);
 
 			// 슬롯 락(SemaphoreSlim)은 dispose하지 않는다 — AvailableWaitHandle을 쓰지
 			// 않는 한 dispose는 사실상 불필요하며, 이전에는 drain이 끝나지 않은 채 여기
 			// 또는 Dispose()가 먼저 실행되면 아직 락 대기 중인 TakeFromSlotAsync의
 			// Release()가 ObjectDisposedException을 던질 수 있는 경합이 있었다.
-			await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
-			IdKeeperApiClient idKeeperApiClient =
-				scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
-
 			RequestV1Remove requestRemove = new(_requester);
-			ResponseV1Remove? responseRemove =
-				await idKeeperApiClient.PostIdKeeperRemove(requestRemove, cancellationToken);
+			ResponseV1Remove? responseRemove = await CallApiAsync(
+				client => client.PostIdKeeperRemove(requestRemove, cancellationToken))
+				.ConfigureAwait(false);
 			if (responseRemove is null)
 			{
 				// RemoveAsync는 종료 경로에서 호출되므로 fail-fast로 앱을 죽이지 않고
@@ -564,7 +578,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 		bool acquired = false;
 		try
 		{
-			await _initLock.WaitAsync(cancellationToken);
+			await _initLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 			acquired = true;
 
 			if (_generatorSlots is null)
@@ -572,13 +586,10 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 				throw new SnowflakeRuntimeException("Cannot renew: GeneratorSlots is null.");
 			}
 
-			await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
-			IdKeeperApiClient idKeeperApiClient =
-				scope.ServiceProvider.GetRequiredService<IdKeeperApiClient>();
-
 			RequestV1Renew requestRenew = new(_requester, DateTimeOffset.UtcNow);
-			ResponseV1Renew? responseRenew =
-				await idKeeperApiClient.PostIdKeeperRenew(requestRenew, cancellationToken);
+			ResponseV1Renew? responseRenew = await CallApiAsync(
+				client => client.PostIdKeeperRenew(requestRenew, cancellationToken))
+				.ConfigureAwait(false);
 
 			// 전송 실패(네트워크 오류·타임아웃·5xx)이거나 Ids 필드 자체가 없는 비정상 응답.
 			// 어느 쪽도 "서버가 리스를 잃었다"는 근거가 아니므로 — 특히 Ids=null은 빈 목록과
@@ -723,7 +734,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 				DateTime renewAtUtc = new(Volatile.Read(ref _renewAtUtcTicks), DateTimeKind.Utc);
 				if (renewAtUtc <= utcNow && utcNow < expiredAtUtc)
 				{
-					await RenewAsync(cancellationToken);
+					await RenewAsync(cancellationToken).ConfigureAwait(false);
 				}
 				else if (expiredAtUtc <= utcNow)
 				{
@@ -735,7 +746,7 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 						$"Snowflake node id was expired. expireAtUtc={expiredAtUtc:O}");
 				}
 
-				await Task.Delay(NextLoopDelay(), cancellationToken);
+				await Task.Delay(NextLoopDelay(), cancellationToken).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException)
 			{

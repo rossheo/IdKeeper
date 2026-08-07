@@ -15,7 +15,7 @@ internal sealed class SnowflakeInitHealthCheck : IHealthCheck
 		HealthCheckContext context,
 		CancellationToken cancellationToken = default)
 	{
-		bool isReady = await _snowflakeHostedService.IsReadyAsync(cancellationToken);
+		bool isReady = await _snowflakeHostedService.IsReadyAsync(cancellationToken).ConfigureAwait(false);
 
 		return isReady
 			? HealthCheckResult.Healthy()
