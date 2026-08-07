@@ -1,0 +1,38 @@
+name: Publish NuGet packages
+
+# 컨테이너 이미지 퍼블리시(docker-publish.yml)와 분리한다 — 트리거는 같지만 한쪽 실패가
+# 다른 쪽을 막지 않도록 워크플로를 나눈다.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  pack-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Directory.Build.targets의 버전 조립(git rev-list --count)이 정확한 값을 내도록
+          # 전체 히스토리를 가져온다. 얕은 클론이면 패키지 버전이 어긋난다.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Pack
+        run: dotnet pack IdKeeper.Client/IdKeeper.Client.csproj -c Release -o artifacts
+
+      - name: Push to GitHub Packages
+        # 버전이 Major.YYMM.이번달커밋수라 push마다 값이 달라지지만, 워크플로를 재실행하면
+        # 같은 버전을 다시 올리게 된다. GitHub Packages는 덮어쓰기를 허용하지 않으므로
+        # --skip-duplicate로 흡수한다.
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          --api-key ${{ secrets.GITHUB_TOKEN }}
+          --skip-duplicate

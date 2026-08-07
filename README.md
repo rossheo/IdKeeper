@@ -47,8 +47,13 @@ docker compose up -d
         - 임대 기간(Lease duration) 설정 (기본값: 48시간)
         - 최초 만료 시간(FirstTimeExpiration) 설정 (기본값: 10분, 1~20분 범위 설정 가능)
         - 회수 유예 시간(CleanupGracePeriod) 설정 (기본값: 10분, 0~1시간 범위 설정 가능. 0이면 유예 없음)
+  - `IdKeeper.Client`
+    - 노드 Id 임대 생명주기(Alloc/Renew/Remove, IdGen 슬롯 관리, 만료 시 발급 차단)를 담은 NuGet 라이브러리
+    - 소비 앱이 자기 프로세스에 임베드해 네트워크 홉 없이 SnowflakeId를 발급한다 (`ISnowflakeIdGenerator.NextId()`)
+    - GitHub Packages로 배포한다. 도입 방법과 주의사항은 `IdKeeper.Client/README.md` 참고
+      - **GitHub Packages의 NuGet은 공개 패키지도 복원에 인증(PAT)이 필요**하다
   - `IdKeeper.SnowflakeApiService`
-    - `IdKeeper.ApiService`에서 노드 Id를 임대받아 SnowflakeId를 발급하는 API
+    - `IdKeeper.Client`를 소비하는 HTTP 게이트웨이. 라이브러리를 임베드할 수 없는 소비자용이다
       - Alloc (SnowflakeId 발급, 필요한 개수)
       - Version (버전 정보)
   - `IdKeeper.Web`
