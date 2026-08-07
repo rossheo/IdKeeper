@@ -105,32 +105,12 @@
 	private string _filterActor = string.Empty;
 	private string _filterRequester = string.Empty;
 
+	// AuditLogAction에서 직접 읽는다. 손으로 나열하면 상수가 추가될 때마다 빠뜨리게 되고,
+	// 실제로 그렇게 되어 8개 액션(RedisMigrated, SnowflakeLayoutChanged 등)이 기록은 되지만
+	// 필터로 선택할 수 없었다. UserRoles.razor가 Role에 대해 쓰는 것과 같은 방식이며,
+	// 결과는 캐시되고 알파벳순으로 정렬된다.
 	private static readonly string[] _allActions =
-	[
-		AuditLogAction.Alloc,
-		AuditLogAction.Renew,
-		AuditLogAction.Remove,
-		AuditLogAction.XApiKeyCreated,
-		AuditLogAction.XApiKeyDeleted,
-		AuditLogAction.IgnoreExpireChanged,
-		AuditLogAction.DescriptionUpdated,
-		AuditLogAction.UserRoleChanged,
-		AuditLogAction.UserEmailConfirmedChanged,
-		AuditLogAction.FeatureSwitchCreated,
-		AuditLogAction.FeatureSwitchUpdated,
-		AuditLogAction.FeatureSwitchDeleted,
-		AuditLogAction.FeatureSwitchToggled,
-		AuditLogAction.UserLockoutSet,
-		AuditLogAction.UserLockoutCleared,
-		AuditLogAction.XApiKeyDescriptionUpdated,
-		AuditLogAction.XApiKeyExpiredUpdated,
-		AuditLogAction.XApiWhitelistCreated,
-		AuditLogAction.XApiWhitelistDeleted,
-		AuditLogAction.XApiWhitelistDescriptionUpdated,
-		AuditLogAction.XApiWhitelistHostnameCreated,
-		AuditLogAction.XApiWhitelistHostnameDeleted,
-		AuditLogAction.XApiWhitelistHostnameDescriptionUpdated,
-	];
+		ReflectionConstant.GetPublicStaticStringMemberValues(typeof(AuditLogAction));
 
 	private async Task<TableData<AuditLog>> LoadServerDataAsync(
 		TableState state, CancellationToken cancellationToken)
@@ -162,31 +142,27 @@
 		return _table.ReloadServerData();
 	}
 
+	// 액션마다 색을 나열하면 상수가 늘어날 때마다 빠뜨리게 되므로, 이름 접미사로 규칙화한다.
+	// 새 액션이 추가돼도 규칙에 따라 자동으로 색이 정해진다.
+	// 도메인 핵심 동작(Alloc/Renew/Remove)과 계정 잠금만 접미사 규칙으로 표현되지 않아 명시한다.
 	private static Color GetActionColor(string action) => action switch
 	{
 		AuditLogAction.Alloc => Color.Success,
 		AuditLogAction.Renew => Color.Info,
 		AuditLogAction.Remove => Color.Warning,
-		AuditLogAction.XApiKeyCreated => Color.Primary,
-		AuditLogAction.XApiKeyDeleted => Color.Error,
-		AuditLogAction.IgnoreExpireChanged => Color.Tertiary,
-		AuditLogAction.DescriptionUpdated => Color.Secondary,
-		AuditLogAction.UserRoleChanged => Color.Primary,
-		AuditLogAction.UserEmailConfirmedChanged => Color.Info,
-		AuditLogAction.FeatureSwitchCreated => Color.Success,
-		AuditLogAction.FeatureSwitchUpdated => Color.Secondary,
-		AuditLogAction.FeatureSwitchDeleted => Color.Error,
-		AuditLogAction.FeatureSwitchToggled => Color.Tertiary,
 		AuditLogAction.UserLockoutSet => Color.Error,
 		AuditLogAction.UserLockoutCleared => Color.Warning,
-		AuditLogAction.XApiKeyDescriptionUpdated => Color.Secondary,
-		AuditLogAction.XApiKeyExpiredUpdated => Color.Tertiary,
-		AuditLogAction.XApiWhitelistCreated => Color.Success,
-		AuditLogAction.XApiWhitelistDeleted => Color.Error,
-		AuditLogAction.XApiWhitelistDescriptionUpdated => Color.Secondary,
-		AuditLogAction.XApiWhitelistHostnameCreated => Color.Success,
-		AuditLogAction.XApiWhitelistHostnameDeleted => Color.Error,
-		AuditLogAction.XApiWhitelistHostnameDescriptionUpdated => Color.Secondary,
+
+		_ when action.EndsWith("Created", StringComparison.Ordinal) => Color.Success,
+		_ when action.EndsWith("Imported", StringComparison.Ordinal)
+			|| action.EndsWith("Migrated", StringComparison.Ordinal) => Color.Success,
+		_ when action.EndsWith("Deleted", StringComparison.Ordinal)
+			|| action.EndsWith("Removed", StringComparison.Ordinal) => Color.Error,
+		_ when action.EndsWith("Updated", StringComparison.Ordinal) => Color.Secondary,
+		_ when action.EndsWith("Changed", StringComparison.Ordinal)
+			|| action.EndsWith("Toggled", StringComparison.Ordinal) => Color.Tertiary,
+		_ when action.EndsWith("Exported", StringComparison.Ordinal) => Color.Info,
+
 		_ => Color.Default,
 	};
 }
