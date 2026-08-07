@@ -67,7 +67,9 @@ public sealed class SnowflakeClientOptions : IValidatableObject
 			}
 		}
 
-		if (RenewLoopDuration <= TimeSpan.Zero || RenewLoopDuration > TimeSpan.FromMinutes(30))
+		// 하한을 실제로 강제한다. NextLoopDelay는 갱신 시점 전이면 이 값을 클램프 없이 그대로
+		// 대기 시간으로 쓰므로, 1틱 같은 값을 통과시키면 갱신 루프가 사실상 busy loop가 된다.
+		if (RenewLoopDuration < TimeSpan.FromSeconds(1) || RenewLoopDuration > TimeSpan.FromMinutes(30))
 		{
 			yield return new ValidationResult(
 				$"'{nameof(RenewLoopDuration)}' must be between 1 second and 30 minutes." +

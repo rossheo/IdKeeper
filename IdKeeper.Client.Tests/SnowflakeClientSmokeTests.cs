@@ -53,9 +53,11 @@ public sealed class SnowflakeClientSmokeTests : IDisposable
 
 	private static readonly PropertyInfo SlotLockProperty = SlotType.GetProperty("Lock")!;
 
+	private static readonly DateTime Epoch = new(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
 	private static readonly IdGeneratorOptions Options = new(
 		new IdStructure(41, 10, 12),
-		new DefaultTimeSource(new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
+		new DefaultTimeSource(Epoch),
 		SequenceOverflowStrategy.SpinWait);
 
 	private readonly SnowflakeHostedService _sut;
@@ -90,6 +92,17 @@ public sealed class SnowflakeClientSmokeTests : IDisposable
 		Array arr = Array.CreateInstance(SlotType, count);
 		for (Int32 i = 0; i < count; i++)
 			arr.SetValue(SlotCtor.Invoke([new IdGenerator(i, Options)]), i);
+		SlotField.SetValue(_sut, arr);
+	}
+
+	/// <summary>CreateId() 안에서 발급을 멈춰 세울 수 있도록 게이트 타임소스로 슬롯 1개를 만든다.</summary>
+	private void SetGatedSlot(ITimeSource timeSource)
+	{
+		IdGeneratorOptions gated = new(
+			Options.IdStructure, timeSource, SequenceOverflowStrategy.SpinWait);
+
+		Array arr = Array.CreateInstance(SlotType, 1);
+		arr.SetValue(SlotCtor.Invoke([new IdGenerator(0, gated)]), 0);
 		SlotField.SetValue(_sut, arr);
 	}
 
@@ -568,6 +581,59 @@ public sealed class SnowflakeClientSmokeTests : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// 동기 NextId()도 드레인에 참여해야 한다 — RemoveAsync는 진행 중인 NextId()가 끝난
+	/// 뒤에야 서버로 노드 Id를 반납해야 한다.
+	///
+	/// 이 경로는 사후 EnsureStillValid()로 막을 수 없다. RemoveAsync는 StopIssuing과 달리
+	/// 만료 시각을 MaxValue로 되돌리므로 그 검사가 통과하고, 슬롯을 이미 캡처한 발급이
+	/// 반납 이후까지 살아남아 서버가 재할당한 노드 Id와 겹친다.
+	///
+	/// 설계: 게이트 타임소스가 CreateId() 안에서 발급 스레드를 멈춰 세워 in-flight 상태를
+	/// 결정적으로 만든다. 드레인 참여가 없으면 _allocatingCount가 0이라 StopAsync가 곧바로
+	/// 서버를 호출하므로 두 단언이 모두 falsifiable하다.
+	/// </summary>
+	[Fact]
+	public async Task Drain_ServerCalledOnlyAfterInflightNextIdCompletes()
+	{
+		GatedTimeSource timeSource = new(new DefaultTimeSource(Epoch));
+		SetGatedSlot(timeSource);
+
+		// 다음 CreateId() 한 번만 멈춰 세운다 (IdGenerator 생성자의 접근은 이미 지났다).
+		timeSource.Arm();
+		Task<Int64> nextIdTask = Task.Run(_sut.NextId);
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(5));
+		await timeSource.Entered.WaitAsync(cts.Token);
+
+		Int32 allocatingCount = (Int32)AllocCountField.GetValue(_sut)!;
+
+		SemaphoreSlim responseGate = new(0, 1);
+		bool removeCalled = false;
+		_fakeHandler.ResponseGate = responseGate;
+		_fakeHandler.OnRemoveCalling = () => Volatile.Write(ref removeCalled, true);
+
+		Task stopTask = _sut.StopAsync(CancellationToken.None);
+
+		// 50ms: 드레인 있음 → drainTcs 대기 중이라 removeCalled=false.
+		//       드레인 없음 → 이미 서버를 호출해 removeCalled=true.
+		await Task.Delay(50);
+		bool removedBeforeNextIdDone = Volatile.Read(ref removeCalled);
+
+		// 단언 전에 먼저 풀어 준다 — 실패해도 발급 스레드가 게이트에 갇히지 않게 한다.
+		timeSource.Release();
+		responseGate.Release();
+
+		using CancellationTokenSource cts2 = new(TimeSpan.FromSeconds(5));
+		await Task.WhenAll(stopTask, nextIdTask).WaitAsync(cts2.Token);
+
+		Assert.False(removedBeforeNextIdDone,
+			"RemoveAsync가 in-flight NextId() 완료 전에 서버를 호출했다 (동기 경로 드레인 누락).");
+		Assert.Equal(1, allocatingCount);
+		Assert.True(removeCalled, "RemoveAsync가 서버를 호출하지 않았다.");
+		Assert.True(await nextIdTask > 0);
+	}
+
 	/// <summary>임대가 만료되면 동기 경로도 즉시 차단되어야 한다.</summary>
 	[Fact]
 	public void NextId_ThrowsWhenLeaseExpired()
@@ -611,6 +677,40 @@ sealed class FakeHttpHandler : HttpMessageHandler
 			};
 		}
 		return new HttpResponseMessage(HttpStatusCode.NotFound);
+	}
+}
+
+/// <summary>
+/// Arm() 이후 첫 GetTicks() 호출에서 발급 스레드를 멈춰 세우는 타임소스.
+/// IdGenerator.CreateId()가 시각을 읽는 지점을 이용해 "발급 진행 중" 상태를 결정적으로 만든다.
+/// </summary>
+file sealed class GatedTimeSource(ITimeSource inner) : ITimeSource
+{
+	private readonly SemaphoreSlim _gate = new(0, 1);
+	private readonly TaskCompletionSource _entered =
+		new(TaskCreationOptions.RunContinuationsAsynchronously);
+	private Int32 _armed;
+
+	public DateTimeOffset Epoch => inner.Epoch;
+	public TimeSpan TickDuration => inner.TickDuration;
+
+	/// <summary>발급 스레드가 게이트에 도달했음을 알리는 신호.</summary>
+	public Task Entered => _entered.Task;
+
+	public void Arm() => Volatile.Write(ref _armed, 1);
+
+	public void Release() => _gate.Release();
+
+	public Int64 GetTicks()
+	{
+		// 한 번만 걸린다 — CreateId()가 시각을 여러 번 읽더라도 첫 진입에서만 멈춘다.
+		if (Interlocked.CompareExchange(ref _armed, 0, 1) == 1)
+		{
+			_entered.TrySetResult();
+			_gate.Wait();
+		}
+
+		return inner.GetTicks();
 	}
 }
 

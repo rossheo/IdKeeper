@@ -95,10 +95,8 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 	// 슬롯 존재 여부와 리스 유효성을 함께 본다 — AllocateIdCoreAsync가 발급을 허용하는 조건과
 	// 동일해야 한다. 만료된 슬롯을 실제로 내리는 건 RenewLoop의 다음 주기이므로, 슬롯만 보면
 	// 최대 RenewLoopDuration 동안 헬스체크는 Healthy인데 모든 발급이 503이 되는 구간이 생긴다.
-	public Task<bool> IsReadyAsync(CancellationToken _)
-		=> Task.FromResult(
-			Volatile.Read(ref _generatorSlots) is not null
-			&& DateTime.UtcNow.Ticks < Volatile.Read(ref _expiredAtUtcTicks));
+	// 조건은 IsReady 하나로 모아 두 표면이 어긋나지 않게 한다.
+	public Task<bool> IsReadyAsync(CancellationToken _) => Task.FromResult(IsReady);
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
@@ -189,7 +187,10 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 					client => client.PostIdKeeperAlloc(requestAlloc, cancellationToken))
 					.ConfigureAwait(false);
 
-				if (responseAlloc is null || responseAlloc.Ids.Count == 0)
+				// Ids가 null인 경우까지 함께 본다. 응답 record는 non-nullable로 선언돼 있지만
+				// System.Text.Json은 참조형 null 허용성을 강제하지 않으므로, 필드가 누락되거나
+				// null인 응답이면 그대로 null이 들어온다 (RenewAsync도 같은 이유로 검사한다).
+				if (responseAlloc is null || responseAlloc.Ids is null || responseAlloc.Ids.Count == 0)
 				{
 					_logger.LogWarning(
 						"Failed to alloc node id (attempt {Attempt}), retrying in {DelayMs:F0}ms",
@@ -199,16 +200,18 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 				else
 				{
 					const Int32 MaxBitCount = 63;
-					ResponseV1Alloc.BitCountRecord bitCount = responseAlloc.BitCount;
-					Int32 sum = bitCount.Timestamp + bitCount.NodeId + bitCount.SequenceId;
-					// 합계만 검증하면 음수가 섞여도 통과해 아래 byte 캐스트에서 잘린 값이
-					// 들어갈 수 있다. 각 비트 수가 양수임을 함께 검증해야 byte 캐스트가
-					// 안전하다 (각각 ≤ 61 < 255).
-					if (bitCount.Timestamp <= 0 || bitCount.NodeId <= 0
-						|| bitCount.SequenceId <= 0 || sum != MaxBitCount)
+					// BitCount도 Ids와 같은 이유로 null일 수 있다. 재시도해도 달라지지 않는
+					// 서버 계약 위반이므로 잘못된 비트 수와 같은 분기에서 fail-fast 한다.
+					ResponseV1Alloc.BitCountRecord? bitCount = responseAlloc.BitCount;
+					if (bitCount is null || bitCount.Timestamp <= 0 || bitCount.NodeId <= 0
+						|| bitCount.SequenceId <= 0
+						// 합계만 검증하면 음수가 섞여도 통과해 아래 byte 캐스트에서 잘린 값이
+						// 들어갈 수 있다. 각 비트 수가 양수임을 함께 검증해야 byte 캐스트가
+						// 안전하다 (각각 ≤ 61 < 255).
+						|| bitCount.Timestamp + bitCount.NodeId + bitCount.SequenceId != MaxBitCount)
 					{
 						_logger.LogCritical(
-							"Invalid BitCount {{{BitCount}}}: each must be positive" +
+							"Invalid BitCount {{{BitCount}}}: must be present, each must be positive," +
 							" and sum must be {Max}. Stopping application.",
 							bitCount,
 							MaxBitCount);
@@ -339,20 +342,33 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 	/// <inheritdoc />
 	public Int64 NextId()
 	{
-		GeneratorSlot[] slots = RequireReadySlots();
+		// 비동기 경로와 동일하게 드레인 카운터에 참여한다. RemoveAsync는 이 카운터가 0이 될
+		// 때까지 기다린 뒤에야 서버로 노드 Id를 반납하므로, 여기서 빠지면 슬롯을 이미 캡처한
+		// 발급이 반납 이후까지 살아남아 서버가 재할당한 노드 Id와 겹칠 수 있다.
+		// 사후 EnsureStillValid()로는 막지 못한다 — RemoveAsync는 StopIssuing과 달리 만료
+		// 시각을 MaxValue로 되돌리므로 그 검사가 통과한다.
+		EnterAllocating();
+		try
+		{
+			GeneratorSlot[] slots = RequireReadySlots();
 
-		// count=1은 슬롯 락을 잡지 않는다. IdGen.IdGenerator는 자체적으로 스레드 안전이고
-		// (내부 lock), 이 경로는 다음 밀리초를 기다릴 일이 사실상 없어 비동기 대기로 바꿔
-		// 얻을 이득이 없다. 세마포어는 대량 배치가 락을 오래 쥘 때 대기자가 스레드풀 스레드를
-		// 반납하도록 하는 용도라 여기서는 불필요하다.
-		Int32 n = slots.Length;
-		Int32 index = (Int32)((UInt32)Interlocked.Increment(ref _nextSlot) % (UInt32)n);
-		Int64 id = slots[index].Generator.CreateId();
+			// count=1은 슬롯 락을 잡지 않는다. IdGen.IdGenerator는 자체적으로 스레드 안전이고
+			// (내부 lock), 이 경로는 다음 밀리초를 기다릴 일이 사실상 없어 비동기 대기로 바꿔
+			// 얻을 이득이 없다. 세마포어는 대량 배치가 락을 오래 쥘 때 대기자가 스레드풀 스레드를
+			// 반납하도록 하는 용도라 여기서는 불필요하다.
+			Int32 n = slots.Length;
+			Int32 index = (Int32)((UInt32)Interlocked.Increment(ref _nextSlot) % (UInt32)n);
+			Int64 id = slots[index].Generator.CreateId();
 
-		// Take가 다음 밀리초를 기다리는 사이 리스가 만료됐을 수 있다 — 이미 만료된 노드 Id로
-		// 만든 값은 다른 프로세스와 겹칠 수 있으므로 버린다.
-		EnsureStillValid();
-		return id;
+			// Take가 다음 밀리초를 기다리는 사이 리스가 만료됐을 수 있다 — 이미 만료된 노드 Id로
+			// 만든 값은 다른 프로세스와 겹칠 수 있으므로 버린다.
+			EnsureStillValid();
+			return id;
+		}
+		finally
+		{
+			ExitAllocating();
+		}
 	}
 
 	/// <inheritdoc />
@@ -401,16 +417,26 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 		ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
 		ArgumentOutOfRangeException.ThrowIfGreaterThan(count, MaxAllocateCount);
 
-		Interlocked.Increment(ref _allocatingCount);
+		EnterAllocating();
 		try
 		{
 			return await AllocateIdCoreAsync(count, cancellationToken).ConfigureAwait(false);
 		}
 		finally
 		{
-			if (Interlocked.Decrement(ref _allocatingCount) == 0)
-				Volatile.Read(ref _drainTcs)?.TrySetResult();
+			ExitAllocating();
 		}
+	}
+
+	// 드레인 참여. 발급 경로는 슬롯을 읽기 전에 EnterAllocating()으로 자신을 등록하고,
+	// 반드시 finally에서 ExitAllocating()으로 빠져나와야 한다 — 빠뜨리면 RemoveAsync가
+	// 영원히 드레인을 기다린다.
+	private void EnterAllocating() => Interlocked.Increment(ref _allocatingCount);
+
+	private void ExitAllocating()
+	{
+		if (Interlocked.Decrement(ref _allocatingCount) == 0)
+			Volatile.Read(ref _drainTcs)?.TrySetResult();
 	}
 
 	private async Task<IReadOnlyList<Int64>> AllocateIdCoreAsync(
