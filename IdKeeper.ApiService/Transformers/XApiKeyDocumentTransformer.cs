@@ -13,7 +13,11 @@ public sealed class XApiKeyDocumentTransformer : IOpenApiDocumentTransformer
 		OpenApiDocumentTransformerContext context,
 		CancellationToken cancellationToken)
 	{
-		document.Components!.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+		// Components는 null일 수 있다 — 노출되는 DTO가 하나도 없는 문서(예: 원시 타입만 반환하는
+		// 엔드포인트로만 구성된 API 버전)에는 생성되지 않는다. 이전에는 !로 경고만 눌러 두어
+		// 그런 문서를 요청하면 NullReferenceException으로 500이 났다.
+		document.Components ??= new OpenApiComponents();
+		document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
 
 		if (!document.Components.SecuritySchemes.TryGetValue(
 			_securitySchemeName, out IOpenApiSecurityScheme? scheme))

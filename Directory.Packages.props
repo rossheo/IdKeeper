@@ -8,8 +8,9 @@
 		</NoWarn>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageVersion Include="Asp.Versioning.Mvc" Version="10.0.0" />
-		<PackageVersion Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.0.0" />
+		<PackageVersion Include="Asp.Versioning.Mvc" Version="10.2.1" />
+		<PackageVersion Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.2.1" />
+		<PackageVersion Include="Asp.Versioning.OpenApi" Version="10.2.1" />
 		<PackageVersion Include="Aspire.Hosting.Docker" Version="13.4.6" />
 		<PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.6" />
 		<PackageVersion Include="Aspire.Hosting.Seq" Version="13.4.6" />
@@ -18,7 +19,7 @@
 		<PackageVersion Include="Extensions.MudBlazor.StaticInput" Version="4.1.0" />
 		<PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
 		<PackageVersion Include="Google.Protobuf" Version="3.35.1" />
-		<PackageVersion Include="Grpc.Tools" Version="2.82.0" />
+		<PackageVersion Include="Grpc.Tools" Version="2.83.0" />
 		<PackageVersion Include="IdGen" Version="3.0.7" />
 		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
 		<PackageVersion Include="xunit" Version="2.9.3" />
@@ -35,17 +36,21 @@
 		<PackageVersion Include="Microsoft.Extensions.Options.DataAnnotations" Version="10.0.10" />
 		<PackageVersion Include="Microsoft.Extensions.Identity.Stores" Version="10.0.10" />
 		<PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.8.0" />
-		<!-- Microsoft.AspNetCore.OpenApi 10.0.9가 전이 종속성으로 끌어오는 Microsoft.OpenApi 2.0.0에
-			 취약점(GHSA-v5pm-xwqc-g5wc)이 있어, CentralPackageTransitivePinningEnabled로 패치 버전을 고정한다. -->
+		<!-- Microsoft.AspNetCore.OpenApi(10.0.x)가 전이 종속성으로 끌어오는 Microsoft.OpenApi 2.0.0에
+			 높음 심각도 취약점(GHSA-v5pm-xwqc-g5wc, NU1903)이 있어,
+			 CentralPackageTransitivePinningEnabled로 패치 버전을 고정한다.
+			 10.0.10 기준으로도 의존 선언은 여전히 2.0.0이므로 이 핀은 계속 필요하다.
+			 현재는 Asp.Versioning.OpenApi가 [2.7.5, 3.0.0)을 요구해 이 핀이 없어도 2.7.5로 해석되지만,
+			 그 패키지 의존이 사라지면 바닥이 2.0.0으로 되돌아가므로 핀은 유지한다. -->
 		<PackageVersion Include="Microsoft.OpenApi" Version="2.7.5" />
-		<PackageVersion Include="MudBlazor" Version="9.7.0" />
+		<PackageVersion Include="MudBlazor" Version="9.8.0" />
 		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
 		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
 		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
 		<PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
 		<PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
-		<PackageVersion Include="SimpleBase" Version="5.6.2" />
-		<PackageVersion Include="StackExchange.Redis" Version="3.0.17" />
+		<PackageVersion Include="SimpleBase" Version="5.6.3" />
+		<PackageVersion Include="StackExchange.Redis" Version="3.1.13" />
 		<PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
 		<PackageVersion Include="TickerQ" Version="10.4.0" />
 	</ItemGroup>

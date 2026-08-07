@@ -9,6 +9,7 @@
 	<ItemGroup>
 		<PackageReference Include="Asp.Versioning.Mvc" />
 		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" />
+		<PackageReference Include="Asp.Versioning.OpenApi" />
 		<PackageReference Include="Aspire.Seq" />
 		<PackageReference Include="Google.Protobuf" />
 		<PackageReference Include="Grpc.Tools" PrivateAssets="all" />

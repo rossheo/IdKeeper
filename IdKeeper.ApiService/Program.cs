@@ -66,16 +66,16 @@ builder.Services.AddSingleton<ClockSkewPolicy>();
 // 서로 다른 Job끼리는 영향을 주지 않는다.
 builder.Services.AddTickerQ(opt => opt.ConfigureScheduler(scheduler => scheduler.MaxConcurrency = 1));
 
-builder.Services.AddOpenApi(options =>
-{
-	// SwaggerUI 에서 X-API-Key 헤더 입력
-	options.AddDocumentTransformer<XApiKeyDocumentTransformer>();
-});
-
+// OpenAPI는 AddApiVersioning().AddOpenApi()로 등록한다. Services.AddOpenApi()를 직접 부르면
+// 문서가 하나만 생기고 API 버전을 알지 못한다 — 지금은 버전이 v1 하나뿐이고 GroupNameFormat이
+// 만드는 그룹명이 우연히 기본 문서명 "v1"과 같아 동작하지만, v2를 추가하는 순간
+// SwaggerUI가 가리키는 /openapi/v2.json이 404가 된다.
 builder.Services.AddApiVersioning(options =>
 {
 	options.DefaultApiVersion = new(1);
-	options.AssumeDefaultVersionWhenUnspecified = true;
+	// AssumeDefaultVersionWhenUnspecified는 두지 않는다. 모든 컨트롤러가 [ApiVersion]을 명시하고
+	// 라우트가 v{version:apiVersion} 세그먼트를 요구하므로 버전이 생략된 요청은 애초에 어떤
+	// 라우트에도 매칭되지 않아, 이 설정은 발동할 여지가 없다.
 	options.ReportApiVersions = true;
 	options.ApiVersionReader = new UrlSegmentApiVersionReader();
 })
@@ -84,6 +84,11 @@ builder.Services.AddApiVersioning(options =>
 {
 	options.GroupNameFormat = "'v'VVV";
 	options.SubstituteApiVersionInUrl = true;
+})
+.AddOpenApi(options =>
+{
+	// SwaggerUI 에서 X-API-Key 헤더 입력
+	options.Document.AddDocumentTransformer<XApiKeyDocumentTransformer>();
 });
 
 if (builder.Environment.IsDevelopment())
@@ -127,7 +132,9 @@ if (app.Environment.IsDevelopment())
 
 	app.UseCors();
 
-	app.MapOpenApi();
+	// API 버전마다 문서를 하나씩 생성한다 — 아래 SwaggerUI가 ApiVersionDescriptions를 돌며
+	// /openapi/{group}.json을 가리키므로 버전이 늘어도 그대로 맞아떨어진다.
+	app.MapOpenApi().WithDocumentPerVersion();
 
 	app.UseSwaggerUI(options =>
 	{
