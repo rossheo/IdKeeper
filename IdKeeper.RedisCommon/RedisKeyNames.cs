@@ -127,6 +127,12 @@ public static class RedisKeyNames
 		// All 인덱스를 두지 않는다: 관리 화면은 AllocatedId 행에서 이미 requester 목록을 갖고
 		// 있어 requester별 직접 조회로 충분하고, 요청 경로에 SCAN 선례도 없다.
 		public static string Entry(string requester) => $"IdKeeper/ClockSkew/{Tag}/{requester}";
+
+		// 관측 대상 requester 인덱스. 엔트리는 TTL로 사라지지만 SET 멤버는 남으므로
+		// 조회 시 실제로 존재하는 엔트리만 남기고 정리한다(ClockSkewRepository.GetAllAsync).
+		// 인덱스가 필요한 이유: 거부된 클라이언트는 노드 Id를 받지 못해 AllocatedId 쪽에서
+		// requester를 역추적할 수 없다 — 정작 가장 급한 대상이 조회에서 빠진다.
+		public static string All => $"IdKeeper/ClockSkew/{Tag}/All";
 	}
 
 	public static class CredentialSettings

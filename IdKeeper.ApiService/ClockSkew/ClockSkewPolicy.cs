@@ -1,4 +1,5 @@
 using IdKeeper.ApiService.Settings;
+using IdKeeper.Database.Redis.Models;
 using IdKeeper.Database.Redis.Repositories;
 
 namespace IdKeeper.ApiService.ClockSkew;
@@ -47,7 +48,25 @@ public sealed class ClockSkewPolicy(
 		TimeSpan grace = setting.CleanupGracePeriod;
 		bool reject = grace > TimeSpan.Zero && allowReject && skew > grace;
 
-		await RecordAsync(requester, skew, operation, reject, remoteIp, cancellationToken);
+		// 등급을 함께 저장한다. 임계값은 ApiService 설정이라 Web(관리 화면·알림 Job)은 알 수
+		// 없으므로, 판정 결과를 남겨야 양쪽이 임계값을 따로 관리하지 않는다.
+		// Renew는 거부하지 않지만 유예를 넘은 오차는 Reject 등급으로 남긴다 — 그 클라이언트가
+		// 재기동하면 Alloc에서 실제로 거부되므로, 알림 대상으로는 동일하게 다뤄야 한다.
+		ClockSkewSeverity severity = ClockSkewSeverity.None;
+		if (grace > TimeSpan.Zero)
+		{
+			TimeSpan warnBand = grace / 2;
+			if (skew > grace)
+			{
+				severity = ClockSkewSeverity.Reject;
+			}
+			else if (skew > warnBand || skew < -warnBand)
+			{
+				severity = ClockSkewSeverity.Warn;
+			}
+		}
+
+		await RecordAsync(requester, skew, operation, severity, remoteIp, cancellationToken);
 
 		// CleanupGracePeriod=0은 문서화된 "유예 없음" 탈출구다. 이때 skew > grace로 비교하면
 		// 1초 오차로도 거부되므로, 밴드 계산 전에 강제를 끈다.
@@ -96,7 +115,7 @@ public sealed class ClockSkewPolicy(
 	}
 
 	private async Task RecordAsync(
-		string requester, TimeSpan skew, string operation, bool rejected, string? remoteIp,
+		string requester, TimeSpan skew, string operation, ClockSkewSeverity severity, string? remoteIp,
 		CancellationToken cancellationToken)
 	{
 		// 오차가 클 때만이 아니라 항상 기록한다 — 값이 클 때만 쓰면 운영자가 이 기능이 살아
@@ -107,7 +126,7 @@ public sealed class ClockSkewPolicy(
 		try
 		{
 			await clockSkewRepository.RecordAsync(
-				requester, skew, operation, rejected, remoteIp, ttl, cancellationToken);
+				requester, skew, operation, severity, remoteIp, ttl, cancellationToken);
 		}
 		catch (Exception ex)
 		{

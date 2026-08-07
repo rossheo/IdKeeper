@@ -193,15 +193,13 @@
 	}
 
 	// 임계값은 서버(IdKeeper.ApiService)만 알고 있고 Web은 그 설정을 참조하지 않는다.
-	// 그래서 밴드를 재계산하지 않고 서버가 저장한 판정(Rejected)을 그대로 쓴다.
-	private static Color GetSkewColor(ClockSkewObservation skew)
+	// 그래서 밴드를 재계산하지 않고 서버가 저장한 판정 등급을 그대로 쓴다.
+	private static Color GetSkewColor(ClockSkewObservation skew) => skew.Severity switch
 	{
-		if (skew.Rejected)
-		{
-			return Color.Error;
-		}
-		return skew.SkewSeconds == 0 ? Color.Default : Color.Warning;
-	}
+		ClockSkewSeverity.Reject => Color.Error,
+		ClockSkewSeverity.Warn => Color.Warning,
+		_ => Color.Default,
+	};
 
 	private Task OnUseLocalTimeChanged()
 	{
