@@ -439,6 +439,111 @@ public sealed class SnowflakeClientSmokeTests : IDisposable
 			"지터가 적용되지 않아 재시도 간격이 항상 동일하다.");
 	}
 
+	// ── 동기 NextId() 경로 (라이브러리 소비자 표면) ───────────────────────────────
+	//
+	// 이 경로는 슬롯별 SemaphoreSlim을 잡지 않는다 — IdGen.IdGenerator가 자체적으로 스레드
+	// 안전하기 때문이다. 그 전제가 깨지면 곧바로 ID 중복이 되므로 아래 테스트로 고정한다.
+
+	/// <summary>
+	/// 다수 스레드가 동시에 NextId()를 호출해도 중복이 없어야 한다.
+	/// GeneratorCount를 N으로 설정한 소비자가 기대하는 핵심 보장이다.
+	/// </summary>
+	[Theory]
+	[InlineData(1)]
+	[InlineData(3)]
+	[InlineData(8)]
+	public void NextId_ConcurrentCalls_AllDistinct(Int32 generatorCount)
+	{
+		SetSlots(generatorCount);
+
+		const Int32 TaskCount = 32;
+		const Int32 PerTask = 300;
+
+		Int64[][] results = [.. Enumerable.Range(0, TaskCount)
+			.AsParallel()
+			.WithDegreeOfParallelism(TaskCount)
+			.Select(_ =>
+			{
+				Int64[] ids = new Int64[PerTask];
+				for (Int32 i = 0; i < PerTask; ++i)
+				{
+					ids[i] = _sut.NextId();
+				}
+				return ids;
+			})];
+
+		Int64[] all = [.. results.SelectMany(r => r)];
+
+		Assert.Equal(TaskCount * PerTask, all.Length);
+		Assert.Equal(all.Length, all.Distinct().Count());
+	}
+
+	/// <summary>
+	/// 라운드로빈이 실제로 모든 슬롯에 분산되어야 한다. 한 슬롯에만 몰리면 노드를 N개
+	/// 임대한 의미가 없고 1ms당 상한도 1/N로 떨어진다.
+	/// </summary>
+	[Fact]
+	public void NextId_DistributesAcrossAllSlots()
+	{
+		SetSlots(3);
+
+		HashSet<Int64> usedNodeIds = [];
+		for (Int32 i = 0; i < 30; ++i)
+		{
+			usedNodeIds.Add((_sut.NextId() >> NodeIdShift) & NodeIdMask);
+		}
+
+		Assert.Equal(3, usedNodeIds.Count);
+	}
+
+	/// <summary>
+	/// 동기 NextId()와 대량 배치가 동시에 돌아도 중복이 없어야 한다.
+	/// NextId()는 슬롯 락을 잡지 않으므로 배치가 점유한 제너레이터에 그대로 끼어든다 —
+	/// IdGen 내부 락이 개별 발급 단위로 직렬화해 주는 것에 의존하는 부분이다.
+	/// </summary>
+	[Fact]
+	public async Task NextId_MixedWithBatch_AllDistinct()
+	{
+		SetSlots(3);
+
+		const Int32 BatchSize = 5_000;
+		const Int32 SyncTasks = 8;
+		const Int32 PerSyncTask = 400;
+
+		Task<IReadOnlyList<Int64>> batchTask =
+			_sut.NextIdsAsync(BatchSize, CancellationToken.None);
+
+		Task<Int64[]>[] syncTasks = [.. Enumerable.Range(0, SyncTasks).Select(_ => Task.Run(() =>
+		{
+			Int64[] ids = new Int64[PerSyncTask];
+			for (Int32 i = 0; i < PerSyncTask; ++i)
+			{
+				ids[i] = _sut.NextId();
+			}
+			return ids;
+		}))];
+
+		IReadOnlyList<Int64> batch = await batchTask;
+		Int64[][] sync = await Task.WhenAll(syncTasks);
+
+		Int64[] all = [.. batch.Concat(sync.SelectMany(s => s))];
+
+		Assert.Equal(BatchSize + (SyncTasks * PerSyncTask), all.Length);
+		Assert.Equal(all.Length, all.Distinct().Count());
+	}
+
+	/// <summary>임대가 만료되면 동기 경로도 즉시 차단되어야 한다.</summary>
+	[Fact]
+	public void NextId_ThrowsWhenLeaseExpired()
+	{
+		SetSlots(3);
+		Assert.True(_sut.NextId() > 0);
+
+		ExpiredTicksField.SetValue(_sut, DateTime.UtcNow.AddSeconds(-1).Ticks);
+
+		Assert.Throws<SnowflakeNotReadyException>(() => _sut.NextId());
+	}
+
 	public void Dispose() => _serviceProvider.Dispose();
 }
 
