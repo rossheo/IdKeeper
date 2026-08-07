@@ -22,6 +22,11 @@ public class SnowflakeHostedService : BackgroundService
 	// 갱신 재시도 간격이 아무리 좁혀져도 이보다 짧아지지 않는다 (busy loop 방지).
 	private static readonly TimeSpan s_minLoopDelay = TimeSpan.FromSeconds(5);
 
+	// 초기 할당(Alloc) 재시도 백오프. NextInitRetryDelay 참고.
+	private static readonly TimeSpan s_initialRetryDelay = TimeSpan.FromSeconds(3);
+	private static readonly TimeSpan s_maxInitRetryDelay = TimeSpan.FromSeconds(60);
+	private const double InitRetryJitterRatio = 0.2;
+
 	// 갱신이 밀린 상태에서 만료까지 남은 시간을 이 횟수로 나눠 재시도 간격을 정한다.
 	private const Int32 MinRenewAttempts = 4;
 
@@ -82,14 +87,38 @@ public class SnowflakeHostedService : BackgroundService
 		}
 	}
 
+	/// <summary>
+	/// 초기 할당 재시도 간격을 계산한다 (3s, 6s, 12s, 24s, 48s, 이후 60s 상한).
+	///
+	/// 고정 간격이면 지속 실패 시 로그가 과도하게 쌓인다 — 실패 1회당 두 줄(HTTP 오류 + 이 루프의
+	/// 경고)이 남으므로 3초 고정은 하루 약 5.7만 줄이다. 반대로 상한을 크게 잡으면 원인이 해소된
+	/// 뒤 복구가 늦어지므로, 초기에는 촘촘히 시도해 문제를 즉시 드러내고 상한은 60초로 묶는다.
+	///
+	/// 지터를 섞는 이유: 롤링 배포로 여러 인스턴스가 동시에 기동해 같은 실패(서버 장애, 시계 오차
+	/// 등)를 겪으면 재시도가 같은 시점에 겹쳐 서버로 몰린다.
+	/// </summary>
+	private static TimeSpan NextInitRetryDelay(Int32 attempt)
+	{
+		// 지수가 커져 double이 무한대가 되지 않도록 지수를 먼저 제한한다.
+		Int32 exponent = Math.Min(Math.Max(attempt - 1, 0), 16);
+		double seconds = s_initialRetryDelay.TotalSeconds * Math.Pow(2, exponent);
+
+		TimeSpan delay = seconds >= s_maxInitRetryDelay.TotalSeconds
+			? s_maxInitRetryDelay
+			: TimeSpan.FromSeconds(seconds);
+
+		double jitter = 1.0 + ((Random.Shared.NextDouble() * 2.0 - 1.0) * InitRetryJitterRatio);
+		return delay * jitter;
+	}
+
 	private async Task InitializeAsync(CancellationToken cancellationToken)
 	{
-		const Int32 RetryDelayMs = 3000;
 		Int32 attempt = 0;
 
 		while (!cancellationToken.IsCancellationRequested)
 		{
 			attempt++;
+			TimeSpan retryDelay = NextInitRetryDelay(attempt);
 			bool acquired = false;
 			try
 			{
@@ -114,9 +143,9 @@ public class SnowflakeHostedService : BackgroundService
 				if (responseAlloc is null || responseAlloc.Ids.Count == 0)
 				{
 					_logger.LogWarning(
-						"Failed to alloc node id (attempt {Attempt}), retrying in {DelayMs}ms",
+						"Failed to alloc node id (attempt {Attempt}), retrying in {DelayMs:F0}ms",
 						attempt,
-						RetryDelayMs);
+						retryDelay.TotalMilliseconds);
 				}
 				else
 				{
@@ -235,7 +264,7 @@ public class SnowflakeHostedService : BackgroundService
 
 			try
 			{
-				await Task.Delay(RetryDelayMs, cancellationToken);
+				await Task.Delay(retryDelay, cancellationToken);
 			}
 			catch (OperationCanceledException)
 			{

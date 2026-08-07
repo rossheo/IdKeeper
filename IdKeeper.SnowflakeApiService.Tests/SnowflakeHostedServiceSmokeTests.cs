@@ -43,6 +43,10 @@ public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
 		typeof(SnowflakeHostedService)
 			.GetMethod("NextLoopDelay", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
+	private static readonly MethodInfo NextInitRetryDelayMethod =
+		typeof(SnowflakeHostedService)
+			.GetMethod("NextInitRetryDelay", BindingFlags.NonPublic | BindingFlags.Static)!;
+
 	private static readonly Type SlotType =
 		typeof(SnowflakeHostedService)
 			.GetNestedType("GeneratorSlot", BindingFlags.NonPublic)!;
@@ -378,6 +382,60 @@ public sealed class SnowflakeHostedServiceSmokeTests : IDisposable
 			renewIn: TimeSpan.FromMinutes(-1), expireIn: TimeSpan.FromSeconds(-1));
 
 		Assert.Equal(TimeSpan.FromSeconds(5), delay);
+	}
+
+	private static TimeSpan InvokeNextInitRetryDelay(Int32 attempt)
+		=> (TimeSpan)NextInitRetryDelayMethod.Invoke(null, [attempt])!;
+
+	/// <summary>
+	/// 초기 할당 재시도는 3s에서 시작해 두 배씩 늘어난다. 지터가 ±20%이므로 범위로 검증한다.
+	/// </summary>
+	[Theory]
+	[InlineData(1, 3.0)]
+	[InlineData(2, 6.0)]
+	[InlineData(3, 12.0)]
+	[InlineData(4, 24.0)]
+	[InlineData(5, 48.0)]
+	public void NextInitRetryDelay_GrowsExponentially(Int32 attempt, double expectedSeconds)
+	{
+		TimeSpan delay = InvokeNextInitRetryDelay(attempt);
+
+		Assert.InRange(delay,
+			TimeSpan.FromSeconds(expectedSeconds * 0.8),
+			TimeSpan.FromSeconds(expectedSeconds * 1.2));
+	}
+
+	/// <summary>
+	/// 상한(60초)을 넘지 않아야 한다. 상한이 없으면 원인이 해소된 뒤 복구가 무한정 늦어진다.
+	/// 큰 attempt에서 double이 무한대가 되어 Task.Delay가 던지는 일도 없어야 한다.
+	/// </summary>
+	[Theory]
+	[InlineData(6)]
+	[InlineData(20)]
+	[InlineData(1000)]
+	[InlineData(Int32.MaxValue)]
+	public void NextInitRetryDelay_ClampedToMaximum(Int32 attempt)
+	{
+		TimeSpan delay = InvokeNextInitRetryDelay(attempt);
+
+		Assert.InRange(delay, TimeSpan.FromSeconds(48), TimeSpan.FromSeconds(72));
+	}
+
+	/// <summary>
+	/// 지터가 실제로 적용되어야 한다 — 값이 매번 같으면 동시 기동한 인스턴스들의 재시도가
+	/// 겹쳐 서버로 몰린다.
+	/// </summary>
+	[Fact]
+	public void NextInitRetryDelay_AppliesJitter()
+	{
+		HashSet<TimeSpan> observed = [];
+		for (Int32 i = 0; i < 50; ++i)
+		{
+			observed.Add(InvokeNextInitRetryDelay(3));
+		}
+
+		Assert.True(observed.Count > 1,
+			"지터가 적용되지 않아 재시도 간격이 항상 동일하다.");
 	}
 
 	public void Dispose() => _serviceProvider.Dispose();
