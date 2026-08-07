@@ -45,7 +45,10 @@ builder.Services.AddIdKeeperSnowflake(options =>
 	{
 		options.GeneratorCount = parsedCount;
 	}
-});
+},
+// AddServiceDefaults()가 ConfigureHttpClientDefaults로 모든 HttpClient에 이미 걸어 준다.
+// 라이브러리가 또 걸면 핸들러가 두 겹으로 쌓여 재시도가 곱해지고 총 타임아웃이 중첩된다.
+addResilienceHandler: false);
 
 builder.Services.AddControllers(options =>
 {

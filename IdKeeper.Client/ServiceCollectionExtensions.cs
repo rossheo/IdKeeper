@@ -19,8 +19,20 @@ public static class ServiceCollectionExtensions
 	/// 제너레이터 세트가 둘이면 각자의 시퀀스 카운터가 독립적으로 돌아 <b>완전히 동일한 ID</b>가
 	/// 생성된다. DI로 막지 못하는 경우(한 프로세스에 호스트를 둘 띄우는 등)는 기동 시 예외로 막는다.
 	/// </summary>
+	/// <param name="services">등록 대상 서비스 컬렉션.</param>
+	/// <param name="configure">옵션 구성. 잘못된 값은 기동 시 검증에서 걸러진다.</param>
+	/// <param name="addResilienceHandler">
+	/// HTTP 재시도·회로차단·타임아웃 핸들러를 라이브러리가 직접 걸지 여부. 기본값은 true다 —
+	/// 소비자가 Aspire를 쓴다는 보장이 없어 라이브러리가 자기 몫을 가져와야 하기 때문이다.
+	///
+	/// 호스트가 <c>ConfigureHttpClientDefaults</c>로 이미 걸고 있다면(Aspire의
+	/// <c>AddServiceDefaults()</c>가 그렇다) false로 둔다. 그러지 않으면 핸들러가 두 겹으로
+	/// 쌓여 재시도가 곱해지고 총 타임아웃이 중첩된다.
+	/// </param>
 	public static IServiceCollection AddIdKeeperSnowflake(
-		this IServiceCollection services, Action<SnowflakeClientOptions> configure)
+		this IServiceCollection services,
+		Action<SnowflakeClientOptions> configure,
+		bool addResilienceHandler = true)
 	{
 		ArgumentNullException.ThrowIfNull(services);
 		ArgumentNullException.ThrowIfNull(configure);
@@ -41,17 +53,22 @@ public static class ServiceCollectionExtensions
 		services.TryAddSingleton(serviceProvider =>
 			serviceProvider.GetRequiredService<IOptions<SnowflakeClientOptions>>().Value);
 
-		services.AddHttpClient<IdKeeperApiClient>((serviceProvider, httpClient) =>
+		IHttpClientBuilder httpClientBuilder =
+			services.AddHttpClient<IdKeeperApiClient>((serviceProvider, httpClient) =>
+			{
+				SnowflakeClientOptions options =
+					serviceProvider.GetRequiredService<SnowflakeClientOptions>();
+				// ValidateOnStart가 이미 필수 여부를 검증하므로 여기 도달하면 null이 아니다.
+				httpClient.BaseAddress = options.BaseAddress;
+			});
+
+		if (addResilienceHandler)
 		{
-			SnowflakeClientOptions options =
-				serviceProvider.GetRequiredService<SnowflakeClientOptions>();
-			// ValidateOnStart가 이미 필수 여부를 검증하므로 여기 도달하면 null이 아니다.
-			httpClient.BaseAddress = options.BaseAddress;
-		})
-		// Aspire의 ServiceDefaults가 걸어주던 것을 라이브러리가 직접 가져온다 — 소비자가 Aspire를
-		// 쓴다는 보장이 없다. 전송 계층의 일시 실패는 이 핸들러가, 임대 획득 실패는
-		// SnowflakeHostedService의 백오프가 담당한다.
-		.AddStandardResilienceHandler();
+			// Aspire의 ServiceDefaults가 걸어주던 것을 라이브러리가 직접 가져온다 — 소비자가
+			// Aspire를 쓴다는 보장이 없다. 전송 계층의 일시 실패는 이 핸들러가, 임대 획득
+			// 실패는 SnowflakeHostedService의 백오프가 담당한다.
+			httpClientBuilder.AddStandardResilienceHandler();
+		}
 
 		services.TryAddSingleton<SnowflakeHostedService>();
 		services.TryAddSingleton<ISnowflakeIdGenerator>(serviceProvider =>

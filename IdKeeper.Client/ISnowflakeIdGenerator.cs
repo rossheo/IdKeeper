@@ -24,16 +24,15 @@ public interface ISnowflakeIdGenerator
 	/// <summary>
 	/// ID를 <paramref name="count"/>개 발급한다. 반환 목록은 오름차순 정렬을 보장한다.
 	///
-	/// 노드당 1ms 발급 상한을 넘는 개수를 요청하면 내부적으로 다음 밀리초를 기다리므로,
-	/// 큰 값은 호출 스레드를 그만큼 점유한다. 대량 발급은
-	/// <see cref="NextIdsAsync(Int32, CancellationToken)"/>를 쓰는 편이 낫다.
+	/// 동기 버전을 제공하지 않는 이유: 내부적으로 슬롯 락을 비동기로 대기하므로 동기 래퍼는
+	/// sync-over-async가 되어, SynchronizationContext가 있는 소비자(WPF·WinForms 등)에서
+	/// 경합 시 데드락이 날 수 있다. 적은 개수가 필요하면 <see cref="NextId"/>를 여러 번
+	/// 호출하면 되고(슬롯에 분산되어 오히려 효율적이다), 대량이면 이 메서드를 await 한다.
 	/// </summary>
 	/// <exception cref="SnowflakeNotReadyException">발급 준비가 되지 않은 경우.</exception>
 	/// <exception cref="ArgumentOutOfRangeException">
-	/// <paramref name="count"/>가 1 미만이거나 한 번에 발급 가능한 최대치를 넘는 경우.
+	/// <paramref name="count"/>가 1 미만이거나
+	/// <see cref="SnowflakeIdLimits.MaxAllocateCount"/>를 넘는 경우.
 	/// </exception>
-	IReadOnlyList<Int64> NextIds(Int32 count);
-
-	/// <inheritdoc cref="NextIds(Int32)"/>
 	Task<IReadOnlyList<Int64>> NextIdsAsync(Int32 count, CancellationToken cancellationToken = default);
 }

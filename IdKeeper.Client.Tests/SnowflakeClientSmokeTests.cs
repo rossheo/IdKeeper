@@ -5,7 +5,9 @@ using IdGen;
 using Xunit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace IdKeeper.Client.Tests;
 
@@ -530,6 +532,40 @@ public sealed class SnowflakeClientSmokeTests : IDisposable
 
 		Assert.Equal(BatchSize + (SyncTasks * PerSyncTask), all.Length);
 		Assert.Equal(all.Length, all.Distinct().Count());
+	}
+
+	/// <summary>
+	/// 호스트가 ConfigureHttpClientDefaults로 이미 resilience 핸들러를 걸고 있으면
+	/// (Aspire의 AddServiceDefaults()가 그렇다) 라이브러리는 걸지 않아야 한다.
+	/// 두 겹으로 쌓이면 재시도가 곱해지고 총 타임아웃이 중첩된다.
+	/// </summary>
+	[Theory]
+	[InlineData(true, 1)]
+	[InlineData(false, 0)]
+	public void AddIdKeeperSnowflake_ResilienceHandlerIsOptional(
+		bool addResilienceHandler, Int32 expectedExtraActions)
+	{
+		static Int32 CountActions(IServiceCollection services)
+		{
+			using ServiceProvider provider = services.BuildServiceProvider();
+			return provider.GetRequiredService<IOptionsMonitor<HttpClientFactoryOptions>>()
+				.Get(nameof(IdKeeperApiClient)).HttpMessageHandlerBuilderActions.Count;
+		}
+
+		ServiceCollection bare = new();
+		bare.AddIdKeeperSnowflake(Configure, addResilienceHandler: false);
+		Int32 baseline = CountActions(bare);
+
+		ServiceCollection subject = new();
+		subject.AddIdKeeperSnowflake(Configure, addResilienceHandler);
+
+		Assert.Equal(baseline + expectedExtraActions, CountActions(subject));
+
+		static void Configure(SnowflakeClientOptions options)
+		{
+			options.BaseAddress = new Uri("http://localhost:9");
+			options.ApiKey = "idkeeper-test-key";
+		}
 	}
 
 	/// <summary>임대가 만료되면 동기 경로도 즉시 차단되어야 한다.</summary>

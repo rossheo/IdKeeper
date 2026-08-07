@@ -339,10 +339,6 @@ internal class SnowflakeHostedService : BackgroundService, ISnowflakeIdGenerator
 	}
 
 	/// <inheritdoc />
-	public IReadOnlyList<Int64> NextIds(Int32 count)
-		=> NextIdsAsync(count).GetAwaiter().GetResult();
-
-	/// <inheritdoc />
 	public async Task<IReadOnlyList<Int64>> NextIdsAsync(
 		Int32 count, CancellationToken cancellationToken = default)
 	{

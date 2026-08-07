@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace IdKeeper.Client;
@@ -32,23 +32,16 @@ public static class SnowflakeClientIdentity
 
 		try
 		{
-			if (OperatingSystem.IsWindows())
-			{
-				machineId = GetWindowsMachineGuid();
-			}
-			else if (OperatingSystem.IsLinux())
+			if (OperatingSystem.IsLinux())
 			{
 				machineId = GetKubernetesPodUid()
 					?? GetDockerContainerId()
 					?? ReadFirstLine("/etc/machine-id");
 			}
-			else if (OperatingSystem.IsMacOS())
-			{
-				// macOS의 IOPlatformUUID는 셸/ioreg 없이는 읽을 수 없다. 프로세스를 띄우지 않는다는
-				// 원칙을 지키고 아래 폴백(부팅 시각 + 호스트명)을 쓴다 — PID와 프로세스 시작
-				// 시각이 함께 붙으므로 유일성은 유지된다.
-				machineId = null;
-			}
+			// Windows·macOS에서는 머신 고유값을 읽으려면 레지스트리 패키지나 ioreg 프로세스가
+			// 필요하다. 둘 다 이 라이브러리의 주 배포 대상(리눅스 컨테이너)이 아니고, 프로세스를
+			// 띄우지 않는다는 원칙을 지켜 아래 폴백(부팅 시각 + 호스트명)을 쓴다 — PID와 프로세스
+			// 시작 시각이 함께 붙으므로 유일성은 유지된다.
 		}
 		catch
 		{
@@ -63,15 +56,6 @@ public static class SnowflakeClientIdentity
 		return machineId.Length > MachineIdMaxLength
 			? machineId[..MachineIdMaxLength]
 			: machineId;
-	}
-
-	[System.Runtime.Versioning.SupportedOSPlatform("windows")]
-	private static string? GetWindowsMachineGuid()
-	{
-		// Microsoft.Win32.Registry 패키지 의존을 피하려고 레지스트리 대신 호스트명 기반 폴백을 쓴다.
-		// Windows는 이 라이브러리의 주 배포 대상(리눅스 컨테이너)이 아니고, PID와 프로세스 시작
-		// 시각이 함께 붙어 유일성은 유지된다.
-		return null;
 	}
 
 	private static string? GetKubernetesPodUid()

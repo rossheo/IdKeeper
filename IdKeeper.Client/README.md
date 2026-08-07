@@ -1,4 +1,4 @@
-# IdKeeper.Client
+﻿# IdKeeper.Client
 
 IdKeeper 서버에서 노드 Id를 임대받아 **프로세스 안에서 직접** SnowflakeId를 발급하는 클라이언트다.
 발급마다 네트워크 호출이 일어나지 않는다. 임대 획득·주기적 갱신·정상 종료 시 반납은 백그라운드에서
@@ -54,8 +54,10 @@ public class OrderService(ISnowflakeIdGenerator idGenerator)
 }
 ```
 
-여러 개가 필요하면 `NextIds(count)` 또는 `NextIdsAsync(count)`를 쓴다. 반환 목록은 오름차순
-정렬을 보장한다.
+여러 개가 필요하면 `await NextIdsAsync(count)`를 쓴다. 반환 목록은 오름차순 정렬을 보장한다.
+동기 배치 API는 제공하지 않는다 — 내부적으로 슬롯 락을 비동기로 대기하므로 동기 래퍼는
+sync-over-async가 되어 `SynchronizationContext`가 있는 소비자(WPF·WinForms 등)에서 데드락 위험이
+있다. 적은 개수는 `NextId()`를 여러 번 호출하는 편이 슬롯에 분산되어 오히려 효율적이다.
 
 ## 알아둘 것
 
