@@ -31,8 +31,10 @@ public class VersionConstant
 			logger = loggerFactory.CreateLogger(serviceName);
 		}
 
+		// 서비스 식별은 OTel 리소스(service.name)가 담당한다 — 구조화 속성으로 다시 넣으면
+		// 수집 서버에 별도 "service" 필드가 생기므로 메시지 템플릿에 포함하지 않는다.
 		logger.LogInformation(
-			"{Service}. Version: {Informational} (Assembly: {AssemblyVersion}, File: {FileVersion})",
-			serviceName, informational, assemblyVersion, fileVersion);
+			"Version: {Informational} (Assembly: {AssemblyVersion}, File: {FileVersion})",
+			informational, assemblyVersion, fileVersion);
 	}
 }

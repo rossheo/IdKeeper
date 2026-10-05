@@ -9,7 +9,10 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
-builder.AddSeqEndpoint(connectionName: "seq");
+// Seq(docker-compose·로컬 Aspire의 기본 수집기)는 연결 문자열이 있을 때만 붙인다 —
+// 없으면(예: 외부 OTLP 수집기를 쓰는 배포) OTEL_EXPORTER_OTLP_* 설정만으로 전송한다.
+if (!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("seq")))
+	builder.AddSeqEndpoint(connectionName: "seq");
 
 builder.Services.AddProblemDetails(configure =>
 {

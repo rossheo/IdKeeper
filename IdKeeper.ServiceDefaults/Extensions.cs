@@ -41,7 +41,13 @@ public static class Extensions
 		});
 
 		builder.Services.AddOpenTelemetry()
-			.ConfigureResource(resource => resource.AddService(builder.Environment.ApplicationName))
+			// service.name은 OTEL_SERVICE_NAME이 있으면(로컬 Aspire, k8s 매니페스트) 그 값을 따르고,
+			// 없을 때(docker-compose 등)만 어셈블리명으로 대체한다 — AddService가 환경변수를 덮어쓰지 않게.
+			.ConfigureResource(resource =>
+			{
+				if (string.IsNullOrWhiteSpace(builder.Configuration["OTEL_SERVICE_NAME"]))
+					resource.AddService(builder.Environment.ApplicationName);
+			})
 			.WithMetrics(metrics =>
 			{
 				metrics.AddAspNetCoreInstrumentation()
