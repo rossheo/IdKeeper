@@ -1,4 +1,5 @@
 using IdKeeper.Database.Redis.Backup;
+using IdKeeper.Database.Redis.Health;
 using IdKeeper.Database.Redis.Identity;
 using IdKeeper.Database.Redis.Locking;
 using IdKeeper.Database.Redis.Repositories;
@@ -13,7 +14,8 @@ public static class RedisExtensions
 	public static IHostApplicationBuilder AddIdKeeperRedis(
 		this IHostApplicationBuilder builder, string connectionName = "redis")
 	{
-		builder.AddRedisClient(connectionName);
+		builder.AddRedisClient(connectionName, static settings => settings.DisableHealthChecks = true);
+		builder.Services.AddHealthChecks().AddCheck<RedisPingHealthCheck>("redis-ping");
 
 		builder.Services.AddSingleton<LuaScriptLoader>();
 		builder.Services.AddSingleton<RedisLockFactory>();
