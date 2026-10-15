@@ -12,6 +12,7 @@ using IdKeeper.Common.Exceptions;
 using IdKeeper.Common.Extensions;
 using IdKeeper.Database.Redis.Extensions;
 using IdKeeper.Database.Redis.Repositories;
+using IdKeeper.Database.Redis.Startup;
 using Microsoft.AspNetCore.HttpOverrides;
 using TickerQ.DependencyInjection;
 
@@ -120,7 +121,8 @@ await using (AsyncServiceScope snowflakeLayoutScope = app.Services.CreateAsyncSc
 {
 	SnowflakeLayoutRepository snowflakeLayoutRepository =
 		snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutRepository>();
-	SnowflakeLayout snowflakeLayout = await snowflakeLayoutRepository.GetAsync();
+	SnowflakeLayout snowflakeLayout = await RedisStartupRetry.ExecuteAsync(
+		() => snowflakeLayoutRepository.GetAsync(), app.Logger, "Load snowflake layout");
 	snowflakeLayout.EnsureValid();
 	snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutHolder>()
 		.Initialize(snowflakeLayout);

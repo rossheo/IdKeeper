@@ -2,6 +2,7 @@ using IdKeeper.ApiService.Settings;
 using IdKeeper.Database.Redis;
 using IdKeeper.Database.Redis.Models;
 using IdKeeper.Database.Redis.Repositories;
+using IdKeeper.Database.Redis.Startup;
 using StackExchange.Redis;
 using System.Net;
 using System.Net.Sockets;
@@ -27,8 +28,9 @@ public sealed class CidrCacheRefreshService(
 		await RefreshAsync(stoppingToken);
 
 		ISubscriber subscriber = multiplexer.GetSubscriber();
-		ChannelMessageQueue queue = await subscriber.SubscribeAsync(
-			RedisChannel.Literal(RedisKeyNames.PubSub.CidrChanged));
+		ChannelMessageQueue queue = await RedisStartupRetry.ExecuteAsync(
+			() => subscriber.SubscribeAsync(RedisChannel.Literal(RedisKeyNames.PubSub.CidrChanged)),
+			logger, "Subscribe CIDR change channel", stoppingToken);
 		queue.OnMessage(async _ =>
 		{
 			try

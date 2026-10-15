@@ -4,6 +4,7 @@ using IdKeeper.Database.Redis;
 using IdKeeper.Database.Redis.Extensions;
 using IdKeeper.Database.Redis.Identity;
 using IdKeeper.Database.Redis.Repositories;
+using IdKeeper.Database.Redis.Startup;
 using IdKeeper.Web.Components;
 using IdKeeper.Web.Components.Account;
 using IdKeeper.Web.Endpoints;
@@ -120,7 +121,8 @@ await using (AsyncServiceScope snowflakeLayoutScope = app.Services.CreateAsyncSc
 {
 	SnowflakeLayoutRepository snowflakeLayoutRepository =
 		snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutRepository>();
-	SnowflakeLayout snowflakeLayout = await snowflakeLayoutRepository.GetAsync();
+	SnowflakeLayout snowflakeLayout = await RedisStartupRetry.ExecuteAsync(
+		() => snowflakeLayoutRepository.GetAsync(), app.Logger, "Load snowflake layout");
 	snowflakeLayout.EnsureValid();
 	snowflakeLayoutScope.ServiceProvider.GetRequiredService<SnowflakeLayoutHolder>().Initialize(snowflakeLayout);
 }
