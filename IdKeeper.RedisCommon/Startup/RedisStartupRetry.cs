@@ -19,6 +19,11 @@ public static class RedisStartupRetry
 	// 지연 시간에 ±20%의 지터를 섞어 여러 인스턴스가 동시에 재시도하지 않게 한다.
 	private const double JitterRatio = 0.2;
 
+	// 클러스터 구성 중(CLUSTERDOWN), 데이터 로딩 중(LOADING), 재시도 요청(TRYAGAIN),
+	// 마스터 다운(MASTERDOWN), 장애 조치 중 읽기 전용(READONLY) 응답은 곧 풀리는 일시 오류다.
+	private static readonly string[] TransientServerErrorPrefixes =
+		["CLUSTERDOWN", "LOADING", "TRYAGAIN", "MASTERDOWN", "READONLY"];
+
 	public static async Task<T> ExecuteAsync<T>(
 		Func<Task<T>> operation,
 		ILogger logger,
@@ -78,8 +83,24 @@ public static class RedisStartupRetry
 		return TimeSpan.FromSeconds(seconds * jitter);
 	}
 
-	private static bool IsTransient(Exception ex)
+	// 연결/타임아웃 오류와, 클러스터가 구성·복구되는 동안 서버가 돌려주는 일시적 오류(CLUSTERDOWN 등)를
+	// 재시도 대상으로 본다. 인증 오류(NOAUTH, WRONGPASS) 같은 영구 오류는 재시도하지 않는다.
+	internal static bool IsTransient(Exception ex)
 	{
-		return ex is RedisConnectionException or RedisTimeoutException or TimeoutException;
+		return ex is RedisConnectionException or RedisTimeoutException or TimeoutException
+			|| (ex is RedisServerException && IsTransientServerError(ex.Message));
+	}
+
+	private static bool IsTransientServerError(string message)
+	{
+		foreach (string prefix in TransientServerErrorPrefixes)
+		{
+			if (message.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
