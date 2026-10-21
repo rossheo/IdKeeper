@@ -62,7 +62,7 @@
 									@_result.GeneratedAtUtc.ToString("yyyy-MM-dd HH:mm:ss.fff")
 								</MudText>
 								<MudText Typo="Typo.caption" Color="Color.Tertiary">
-									Local: @_result.GeneratedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")
+									KST: @DateTimeConstant.ToKst(_result.GeneratedAtUtc).ToString("yyyy-MM-dd HH:mm:ss.fff")
 								</MudText>
 							</MudStack>
 						</MudPaper>
@@ -115,11 +115,11 @@
 									</MudStack>
 									<MudText Typo="Typo.body1"><b>@_result.AllocatedId.Requester</b></MudText>
 									<MudText Typo="Typo.caption" Color="Color.Tertiary">
-										할당: @DateTimeConstant.ConvertDateTime(_result.AllocatedId.CreatedAtUtc, useLocalTime: true)
+										할당: @DateTimeConstant.ConvertDateTime(_result.AllocatedId.CreatedAtUtc, useKst: true)
 										&nbsp;|&nbsp;
 										만료: @(_result.AllocatedId.IgnoreExpire
 											? "만료 없음"
-											: DateTimeConstant.ConvertDateTime(_result.AllocatedId.ExpiredAtUtc, useLocalTime: true)
+											: DateTimeConstant.ConvertDateTime(_result.AllocatedId.ExpiredAtUtc, useKst: true)
 												+ $" ({DateTimeConstant.GetRemainTime(_result.AllocatedId.ExpiredAtUtc)})")
 									</MudText>
 								</MudStack>

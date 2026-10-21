@@ -6,7 +6,7 @@
 
 <PageTitle>AuditLogs</PageTitle>
 
-<MudButton OnClick="@OnUseLocalTimeChanged"
+<MudButton OnClick="@OnUseKstChanged"
 		   Variant="Variant.Filled"
 		   DropShadow="false">시간 표시 변경</MudButton>
 
@@ -53,7 +53,7 @@
 					<MudTh>AffectedIds</MudTh>
 					<MudTh>Detail</MudTh>
 					<MudTh>RemoteIp</MudTh>
-					<MudTh>@DateTimeConstant.ConvertTitle("Created", _useLocalTime)</MudTh>
+					<MudTh>@DateTimeConstant.ConvertTitle("Created", _useKst)</MudTh>
 				</HeaderContent>
 				<RowTemplate>
 					<MudTd DataLabel="Id">@context.Id</MudTd>
@@ -79,8 +79,8 @@
 					</MudTd>
 					<MudTd DataLabel="Detail">@(context.Detail ?? "-")</MudTd>
 					<MudTd DataLabel="RemoteIp">@(context.RemoteIp ?? "-")</MudTd>
-					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Created", _useLocalTime)>
-						@DateTimeConstant.ConvertDateTime(context.CreatedAtUtc, _useLocalTime)
+					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Created", _useKst)>
+						@DateTimeConstant.ConvertDateTime(context.CreatedAtUtc, _useKst)
 					</MudTd>
 				</RowTemplate>
 				<NoRecordsContent>
@@ -99,7 +99,7 @@
 
 @code {
 	private MudTable<AuditLog> _table = default!;
-	private bool _useLocalTime = true;
+	private bool _useKst = true;
 
 	private string? _filterAction;
 	private string _filterActor = string.Empty;
@@ -126,9 +126,9 @@
 		return new TableData<AuditLog> { TotalItems = totalItems, Items = items };
 	}
 
-	private Task OnUseLocalTimeChanged()
+	private Task OnUseKstChanged()
 	{
-		_useLocalTime = !_useLocalTime;
+		_useKst = !_useKst;
 		return InvokeAsync(StateHasChanged);
 	}
 

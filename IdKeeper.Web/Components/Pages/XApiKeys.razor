@@ -8,7 +8,7 @@
 @inject AuditLogRepository AuditLogRepository
 
 <PageTitle>XApiKeys</PageTitle>
-<MudButton OnClick="@OnUseLocalTimeChanged"
+<MudButton OnClick="@OnUseKstChanged"
 		   Variant="Variant.Filled"
 		   DropShadow="false">시간 표시 변경</MudButton>
 
@@ -40,8 +40,8 @@
 					<MudTh>ApiKey</MudTh>
 					<MudTh>Owner</MudTh>
 					<MudTh>Description</MudTh>
-					<MudTh>@DateTimeConstant.ConvertTitle("Created", _useLocalTime)</MudTh>
-					<MudTh>@DateTimeConstant.ConvertTitle("Expired", _useLocalTime)</MudTh>
+					<MudTh>@DateTimeConstant.ConvertTitle("Created", _useKst)</MudTh>
+					<MudTh>@DateTimeConstant.ConvertTitle("Expired", _useKst)</MudTh>
 					<MudTh>Actions</MudTh>
 				</HeaderContent>
 				<RowTemplate>
@@ -88,10 +88,10 @@
 							</MudStack>
 						}
 					</MudTd>
-					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Created", _useLocalTime)>
-						@DateTimeConstant.ConvertDateTime(context.CreatedAtUtc, _useLocalTime)
+					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Created", _useKst)>
+						@DateTimeConstant.ConvertDateTime(context.CreatedAtUtc, _useKst)
 					</MudTd>
-					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Expired", _useLocalTime)>
+					<MudTd DataLabel=@DateTimeConstant.ConvertTitle("Expired", _useKst)>
 						@if (_editingExpiredId == context.Id)
 						{
 							<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
@@ -123,7 +123,7 @@
 								<MudText Typo="Typo.body2">
 									@(context.ExpiredAtUtc is null
 									? "-"
-									: $"{DateTimeConstant.ConvertDateTime(context.ExpiredAtUtc, _useLocalTime)}" +
+									: $"{DateTimeConstant.ConvertDateTime(context.ExpiredAtUtc, _useKst)}" +
 						  $" ({DateTimeConstant.GetRemainTime(context.ExpiredAtUtc)})")
 								</MudText>
 								<MudIconButton Icon="@Icons.Material.Filled.Edit"
@@ -161,7 +161,7 @@
 
 	private List<XApiKey> _items = [];
 	private bool _isLoading = true;
-	private bool _useLocalTime = true;
+	private bool _useKst = true;
 	private string _currentUserName = string.Empty;
 
 	#region Description Edit
@@ -196,9 +196,9 @@
 		}
 	}
 
-	private Task OnUseLocalTimeChanged()
+	private Task OnUseKstChanged()
 	{
-		_useLocalTime = !_useLocalTime;
+		_useKst = !_useKst;
 		return InvokeAsync(StateHasChanged);
 	}
 
@@ -329,11 +329,10 @@
 
 		_editingExpiredId = item.Id;
 
-		// 기존 UTC -> Local 변환 (DatePicker 는 Local 날짜 기반)
+		// 기존 UTC -> KST 변환 (DatePicker 는 KST 날짜로 편집)
 		if (item.ExpiredAtUtc is not null)
 		{
-			var utc = DateTime.SpecifyKind(item.ExpiredAtUtc.Value, DateTimeKind.Utc);
-			_editingExpiredAt = utc.ToLocalTime();
+			_editingExpiredAt = DateTimeConstant.ToKst(item.ExpiredAtUtc.Value);
 		}
 		else
 		{
@@ -363,7 +362,7 @@
 		{
 			DateTime? expiredAtUtc = _editingExpiredAt is null
 				? null
-				: DateTime.SpecifyKind(_editingExpiredAt.Value, DateTimeKind.Local).ToUniversalTime();
+				: DateTimeConstant.FromKst(_editingExpiredAt.Value);
 
 			bool found = await XApiKeyRepository.UpdateExpiredAtAsync(id, expiredAtUtc);
 			if (!found)

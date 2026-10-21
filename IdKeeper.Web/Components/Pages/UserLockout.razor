@@ -54,7 +54,7 @@
 						{
 							<MudText Typo="Typo.body2"
 									 Color="@(context.IsLockedOut ? Color.Error : Color.Default)">
-								@context.LockoutEnd.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+								@DateTimeConstant.ToKst(context.LockoutEnd.Value).ToString("yyyy-MM-dd HH:mm:ss") (KST)
 							</MudText>
 						}
 						else
