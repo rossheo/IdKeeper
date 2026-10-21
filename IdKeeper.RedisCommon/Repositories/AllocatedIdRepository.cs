@@ -179,19 +179,10 @@ public sealed class AllocatedIdRepository(
 		return true;
 	}
 
-	public async Task<bool> UpdateDescriptionAsync(
-		Int32 id, string? description, string actor, CancellationToken cancellationToken = default)
-	{
-		IDatabase db = Db;
-		RedisKey entryKey = RedisKeyNames.AllocatedId.Entry(id);
-		if (!await db.KeyExistsAsync(entryKey))
-		{
-			return false;
-		}
-
-		await db.HashSetAsync(entryKey, "Description", description ?? string.Empty);
-		return true;
-	}
+	public Task<bool> UpdateDescriptionAsync(
+		Int32 id, string? description, CancellationToken cancellationToken = default) =>
+		Db.HashSetIfExistsAsync(scripts, RedisKeyNames.AllocatedId.Entry(id),
+			[new("Description", description ?? string.Empty)], cancellationToken);
 
 	public async Task<Int64> CountOfAllocatedAsync(CancellationToken cancellationToken = default)
 	{

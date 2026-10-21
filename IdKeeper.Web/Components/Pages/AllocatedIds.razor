@@ -228,7 +228,7 @@
 				? null
 				: _editingDescriptionValue.Trim();
 
-			bool found = await AllocatedIdRepository.UpdateDescriptionAsync(item.Id, description, _actor);
+			bool found = await AllocatedIdRepository.UpdateDescriptionAsync(item.Id, description);
 			if (!found)
 			{
 				Snackbar.Add($"Id {item.Id} 를 찾을 수 없습니다.", Severity.Error);

@@ -66,31 +66,15 @@ public sealed class XApiKeyRepository(IConnectionMultiplexer multiplexer, LuaScr
 		return id.IsNullOrEmpty ? null : await GetAsync((Int64)id, cancellationToken);
 	}
 
-	public async Task<bool> UpdateDescriptionAsync(
-		Int64 id, string? description, CancellationToken cancellationToken = default)
-	{
-		RedisKey entryKey = RedisKeyNames.XApiKey.Entry(id);
-		if (!await Db.KeyExistsAsync(entryKey))
-		{
-			return false;
-		}
+	public Task<bool> UpdateDescriptionAsync(
+		Int64 id, string? description, CancellationToken cancellationToken = default) =>
+		Db.HashSetIfExistsAsync(scripts, RedisKeyNames.XApiKey.Entry(id),
+			[new("Description", description ?? string.Empty)], cancellationToken);
 
-		await Db.HashSetAsync(entryKey, "Description", description ?? string.Empty);
-		return true;
-	}
-
-	public async Task<bool> UpdateExpiredAtAsync(
-		Int64 id, DateTime? expiredAtUtc, CancellationToken cancellationToken = default)
-	{
-		RedisKey entryKey = RedisKeyNames.XApiKey.Entry(id);
-		if (!await Db.KeyExistsAsync(entryKey))
-		{
-			return false;
-		}
-
-		await Db.HashSetAsync(entryKey, "ExpiredAtUtc", expiredAtUtc.ToUnixSeconds() ?? RedisValue.EmptyString);
-		return true;
-	}
+	public Task<bool> UpdateExpiredAtAsync(
+		Int64 id, DateTime? expiredAtUtc, CancellationToken cancellationToken = default) =>
+		Db.HashSetIfExistsAsync(scripts, RedisKeyNames.XApiKey.Entry(id),
+			[new("ExpiredAtUtc", expiredAtUtc.ToUnixSeconds() ?? RedisValue.EmptyString)], cancellationToken);
 
 	public async Task<XApiKey?> GetAsync(Int64 id, CancellationToken cancellationToken = default)
 	{

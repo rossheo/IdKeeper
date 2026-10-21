@@ -1,3 +1,4 @@
+using IdKeeper.Database.Redis.Extensions;
 using IdKeeper.Database.Redis.Models;
 using IdKeeper.Database.Redis.Scripts;
 using StackExchange.Redis;
@@ -35,18 +36,10 @@ public sealed class XApiAllowedCidrRepository(IConnectionMultiplexer multiplexer
 	public async Task<bool> ExistsAsync(string cidr, CancellationToken cancellationToken = default) =>
 		await Db.KeyExistsAsync(RedisKeyNames.XApiAllowedCidr.Entry(cidr));
 
-	public async Task<bool> UpdateDescriptionAsync(
-		string cidr, string? description, CancellationToken cancellationToken = default)
-	{
-		RedisKey entryKey = RedisKeyNames.XApiAllowedCidr.Entry(cidr);
-		if (!await Db.KeyExistsAsync(entryKey))
-		{
-			return false;
-		}
-
-		await Db.HashSetAsync(entryKey, "Description", description ?? string.Empty);
-		return true;
-	}
+	public Task<bool> UpdateDescriptionAsync(
+		string cidr, string? description, CancellationToken cancellationToken = default) =>
+		Db.HashSetIfExistsAsync(scripts, RedisKeyNames.XApiAllowedCidr.Entry(cidr),
+			[new("Description", description ?? string.Empty)], cancellationToken);
 
 	public async Task<List<XApiAllowedCidr>> GetAllAsync(CancellationToken cancellationToken = default)
 	{

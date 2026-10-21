@@ -1,3 +1,4 @@
+using IdKeeper.Database.Redis.Extensions;
 using IdKeeper.Database.Redis.Models;
 using IdKeeper.Database.Redis.Scripts;
 using StackExchange.Redis;
@@ -34,22 +35,13 @@ public sealed class FeatureSwitchRepository(IConnectionMultiplexer multiplexer, 
 	public async Task<bool> ExistsAsync(string key, CancellationToken cancellationToken = default) =>
 		await Db.KeyExistsAsync(RedisKeyNames.FeatureSwitch.Entry(key));
 
-	public async Task<bool> UpdateAsync(
-		string key, bool isEnabled, string? description, CancellationToken cancellationToken = default)
-	{
-		RedisKey entryKey = RedisKeyNames.FeatureSwitch.Entry(key);
-		if (!await Db.KeyExistsAsync(entryKey))
-		{
-			return false;
-		}
-
-		await Db.HashSetAsync(entryKey,
+	public Task<bool> UpdateAsync(
+		string key, bool isEnabled, string? description, CancellationToken cancellationToken = default) =>
+		Db.HashSetIfExistsAsync(scripts, RedisKeyNames.FeatureSwitch.Entry(key),
 		[
 			new("IsEnabled", isEnabled ? "1" : "0"),
 			new("Description", description ?? string.Empty),
-		]);
-		return true;
-	}
+		], cancellationToken);
 
 	public async Task DeleteAsync(string key, CancellationToken cancellationToken = default) =>
 		await Db.ScriptEvaluateAsync(

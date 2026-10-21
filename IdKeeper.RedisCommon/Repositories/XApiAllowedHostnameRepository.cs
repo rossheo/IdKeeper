@@ -1,3 +1,4 @@
+using IdKeeper.Database.Redis.Extensions;
 using IdKeeper.Database.Redis.Models;
 using IdKeeper.Database.Redis.Scripts;
 using StackExchange.Redis;
@@ -35,18 +36,10 @@ public sealed class XApiAllowedHostnameRepository(IConnectionMultiplexer multipl
 	public async Task<bool> ExistsAsync(string hostname, CancellationToken cancellationToken = default) =>
 		await Db.KeyExistsAsync(RedisKeyNames.XApiAllowedHostname.Entry(hostname));
 
-	public async Task<bool> UpdateDescriptionAsync(
-		string hostname, string? description, CancellationToken cancellationToken = default)
-	{
-		RedisKey entryKey = RedisKeyNames.XApiAllowedHostname.Entry(hostname);
-		if (!await Db.KeyExistsAsync(entryKey))
-		{
-			return false;
-		}
-
-		await Db.HashSetAsync(entryKey, "Description", description ?? string.Empty);
-		return true;
-	}
+	public Task<bool> UpdateDescriptionAsync(
+		string hostname, string? description, CancellationToken cancellationToken = default) =>
+		Db.HashSetIfExistsAsync(scripts, RedisKeyNames.XApiAllowedHostname.Entry(hostname),
+			[new("Description", description ?? string.Empty)], cancellationToken);
 
 	public async Task<List<XApiAllowedHostname>> GetAllAsync(CancellationToken cancellationToken = default)
 	{
